@@ -3,6 +3,7 @@ import { detectWebmCapability } from './video-capabilities.mjs';
 import { createEditorBridge } from './video-bridge.mjs';
 import { recordComposition, assertForeground } from './video-export.mjs';
 import { sourceRefFor, digestOf, sameContent, legacyMatches } from './video-sources.mjs';
+import { mountChat } from './video-chat.mjs';
 
 const $ = id => document.getElementById(id);
 const instanceId = crypto.randomUUID();
@@ -20,7 +21,7 @@ const allClips = () => project().tracks.flatMap(track => track.clips.map(clip =>
 const clip = () => allClips().find(item => item.id === project().selection) || allClips().find(item => item.trackKind === 'video') || null;
 const format = seconds => { const value = Math.max(0, Number(seconds) || 0); return `${String(Math.floor(value / 60)).padStart(2, '0')}:${String(Math.floor(value % 60)).padStart(2, '0')}.${String(Math.floor(value * 100 % 100)).padStart(2, '0')}`; };
 function toast(message) { const node = $('toast'); node.textContent = message; node.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => node.classList.remove('show'), 2400); }
-function apply(command, commandId = null) { if (exportBusy) throw Object.assign(new Error('导出期间请等待完成后再修改工程'), { code: 'EXPORT_BUSY' }); if (command.type === 'media.video.history.undo' || command.type === 'media.video.history.redo') { const backwards = command.type.endsWith('.undo'); if (!(backwards ? canUndo(history) : canRedo(history))) throw Object.assign(new Error('没有可撤销或重做的修改'), { code: 'HISTORY_EMPTY' }); history = backwards ? undo(history) : redo(history); render(); return readState(project(), history, instanceId, capabilities()); } const before = readState(project(), history, instanceId, capabilities()); const next = reduceProject(project(), command); next.lastCommandId = commandId; history = commit(history, next); const after = readState(project(), history, instanceId, capabilities()); $('auditDigest').textContent = `${before.stateDigest.slice(-8)} → ${after.stateDigest.slice(-8)} · R${before.revision}→R${after.revision}`; render(); return after; }
+function apply(command, commandId = null) { if (exportBusy) throw Object.assign(new Error('导出期间请等待完成后再修改工程'), { code: 'EXPORT_BUSY' }); if (command.type === 'media.video.history.undo' || command.type === 'media.video.history.redo') { const backwards = command.type.endsWith('.undo'); if (!(backwards ? canUndo(history) : canRedo(history))) throw Object.assign(new Error('没有可撤销或重做的修改'), { code: 'HISTORY_EMPTY' }); history = backwards ? undo(history) : redo(history); render(); return readState(project(), history, instanceId, capabilities()); } const before = readState(project(), history, instanceId, capabilities()); const next = reduceProject(project(), command); next.lastCommandId = commandId; history = commit(history, next); const after = readState(project(), history, instanceId, capabilities()); $('auditDigest').textContent = `${before.stateDigest.slice(-8)} → ${after.stateDigest.slice(-8)} · R${before.revision}→R${after.revision}`; render(); globalThis.__dshChatTool?.(command, after); return after; }
 function recordPlaybackTime(time) { const next = reduceProject(project(), { type: 'media.video.timeline.seek', time }); history = { ...history, present: next }; }
 function capabilities() { return { webm: webmCapability.status === 'available' }; }
 function probeCapabilities() { webmCapability = detectWebmCapability($('video')); const label = $('webmCapability'); label.textContent = webmCapability.status === 'available' ? `可用 (${webmCapability.mimeType})` : '不可用'; label.title = webmCapability.reason; label.className = webmCapability.status === 'available' ? '' : 'unknown'; $('exportVideo').disabled = webmCapability.status !== 'available' || !clip(); }
@@ -412,3 +413,87 @@ createEditorBridge({
   exportStatus: message => exportStatusOf(message),
   expectedOrigin: location.origin === 'null' ? null : location.origin
 });
+
+// ── 0.2.0 P0：对话面板（消息映射 / 工具卡片 / 输入区 / 审批只读）──
+// 只做渲染与页面内定位：定位只改 selection 与描边，不改 revision、不进历史、不发 transport 消息。
+const chat = mountChat({
+  root: $('chatPanel'),
+  onLocate: payload => locateClipFromCard(payload),
+  onOpenSession: () => {
+    if (!document.querySelector('.chat-panel')) return;
+    if (window.parent !== window) window.parent.postMessage({ type: 'media.openSession', editorKind: 'video' }, location.origin);
+    else chat.showError('当前页面不在宿主内，没有可打开的原生会话');
+  },
+  onSend: async payload => {
+    // 本地模拟：还没有接真实 DSH 会话。明确说明，不伪造"已发给模型"。
+    chat.append({ kind: 'assistant', text: `收到：「${payload.text}」。当前是本地模拟，未连接 DSH 会话；接入后同一条消息会交给会话执行。` });
+  },
+  initialMessages: [
+    { kind: 'system', text: '视频编辑器已就绪。对话是会话入口，任何写入仍走白名单命令与审批。' },
+    { kind: 'assistant', text: '试试点工具卡片，我会定位到对应的时间线片段。\n\n- 例：`clip.add` 会带上轨道与片段身份\n- 例：`track.update` 会带上轨道 id' },
+  ],
+});
+
+function locateClipFromCard({ trackId, clipId }) {
+  const target = allClips().find(item => item.id === clipId) || null;
+  if (!target) {
+    chat.showError('这个片段已不在工程里（可能被删除或撤销）');
+    return;
+  }
+  // 只改选中与描边：不 bump revision、不进历史、不写文档。
+  history = { ...history, present: { ...project(), selection: target.id } };
+  selectedTrackId = target.trackId || trackId || selectedTrackId;
+  render();
+  const node = $('trackList').querySelector(`[data-clip="${target.id}"]`);
+  if (node) {
+    node.classList.add('clip-highlight');
+    node.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    setTimeout(() => node.classList.remove('clip-highlight'), 1500);
+  }
+  chat.showError('');
+}
+
+// 每次成功写入后追加一张工具卡片：名称 + 轨道/片段身份 + 起止微秒，不渲染原始 JSON。
+globalThis.__dshChatTool = (command, after) => {
+  const clipId = command.clipId || command.clip?.id || (command.type === 'media.video.clip.add' ? after?.selection : null);
+  const target = clipId ? allClips().find(item => item.id === clipId) : null;
+  chat.append({
+    kind: 'tool',
+    tool: {
+      name: command.type,
+      trackId: command.trackId || target?.trackId || null,
+      clipId: clipId || null,
+      startMicros: target ? Math.round(target.start * 1e6) : undefined,
+      endMicros: target ? Math.round((target.start + (target.out - target.in)) * 1e6) : undefined,
+    },
+  });
+};
+
+// 分栏拖拽：只改右列宽度，不重建任何节点。
+(() => {
+  const splitter = $('paneSplitter');
+  const workspace = document.querySelector('.workspace');
+  if (!splitter || !workspace) return;
+  const applyWidth = width => {
+    const clamped = Math.max(260, Math.min(560, width));
+    workspace.style.setProperty('--side-width', `${clamped}px`);
+  };
+  let dragging = false;
+  splitter.addEventListener('pointerdown', event => {
+    dragging = true;
+    splitter.setPointerCapture(event.pointerId);
+    event.preventDefault();
+  });
+  splitter.addEventListener('pointermove', event => {
+    if (!dragging) return;
+    applyWidth(window.innerWidth - event.clientX);
+  });
+  const stop = () => { dragging = false; };
+  splitter.addEventListener('pointerup', stop);
+  splitter.addEventListener('pointercancel', stop);
+  splitter.addEventListener('keydown', event => {
+    const current = parseInt(getComputedStyle(workspace).getPropertyValue('--side-width')) || 320;
+    if (event.key === 'ArrowLeft') { applyWidth(current + 24); event.preventDefault(); }
+    if (event.key === 'ArrowRight') { applyWidth(current - 24); event.preventDefault(); }
+  });
+})();

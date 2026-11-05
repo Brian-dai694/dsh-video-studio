@@ -45,13 +45,30 @@
 
       </div>
     </section>
+    <div class="pane-splitter" id="paneSplitter" role="separator" aria-orientation="vertical" aria-label="调整对话面板宽度" tabindex="0"></div>
     <aside class="inspector">
+      <section class="chat-panel" id="chatPanel" aria-label="DSH 会话">
+        <div class="panel-heading"><div><span class="eyebrow">DSH 会话</span><h2>对话</h2></div><span class="revision-pill" id="chatSessionLabel">视频</span></div>
+        <div class="chat-error" data-chat-error role="alert" hidden></div>
+        <div class="chat-list" data-chat-list></div>
+        <div class="chat-attachments" data-chat-attachments hidden></div>
+        <div class="chat-composer">
+          <textarea data-chat-input rows="2" placeholder="说一句要改的地方，Enter 发送 / Shift+Enter 换行" aria-label="对话输入"></textarea>
+          <div class="chat-actions">
+            <button type="button" class="icon-btn" data-chat-attach aria-label="添加图片附件">▧ 图片</button>
+            <input type="file" accept="image/*" data-chat-file multiple hidden>
+            <button type="button" class="export-btn" data-chat-send disabled>发送</button>
+          </div>
+        </div>
+      </section>
+      <div class="inspector-body">
       <div class="panel-heading"><div><span class="eyebrow">工程状态</span><h2>检查器</h2></div><span class="revision-pill" id="revisionPill">R0</span></div>
       <div class="inspector-section"><h3>片段</h3><div class="property-row"><span>媒体</span><strong id="sourceName">未导入</strong></div><div class="property-row"><span>入点</span><strong id="inValue">—</strong></div><div class="property-row"><span>出点</span><strong id="outValue">—</strong></div><div class="property-row"><span>长度</span><strong id="lengthValue">—</strong></div><input aria-label="片段入点" id="inPoint" type="range" min="0" max="100" value="0"><input aria-label="片段出点" id="outPoint" type="range" min="0" max="100" value="100"></div>
       <div class="inspector-section"><div class="section-title"><h3>叠加对象</h3><span id="overlayCount">0</span></div><div id="overlayList" class="overlay-list"><div class="empty-list">还没有叠加对象</div></div></div>
       <div class="inspector-section"><div class="section-title"><h3>协作模式</h3><span class="safe-dot">本地模拟</span></div><div class="mode-switch"><button class="mode-option active" data-mode="assist">人工确认</button><button class="mode-option" data-mode="autonomous">授权自主</button></div><div class="mode-note" id="modeNote">每次写入先预览并由你确认。</div><button id="grantCapability" class="secondary-btn">授权低风险文字叠加（本地模拟）</button><div class="intent-box" id="intentBox"><label for="intentInput">对话意图</label><textarea id="intentInput" rows="2" placeholder="例如：在片头加上欢迎文字"></textarea><button id="parseIntent" class="secondary-btn">生成操作预览</button></div><div id="commandPreview" class="command-preview" hidden></div><div class="audit-box"><span>最近审计</span><code id="auditDigest">等待操作</code></div></div>
       <div class="inspector-section capability-section"><h3>导出能力</h3><div class="property-row"><span>WebM</span><strong id="webmCapability">检测中</strong></div><div class="property-row"><span>MP4</span><strong class="unknown">未验证</strong></div><div class="capability-note">媒体文件不经过协作中继。工程快照只保存媒体引用。</div></div>
       <button class="read-state-btn" id="readState">读取工程状态</button>
+      </div>
     </aside>
   </main>
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
