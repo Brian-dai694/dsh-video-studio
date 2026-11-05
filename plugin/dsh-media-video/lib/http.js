@@ -26,30 +26,22 @@ const RELAY_ACTIONS = new Set(['register', 'poll', 'respond', 'disconnect']);
 /**
  * boot 令牌的同源校验。
  *
- * 不能只信 `Sec-Fetch-Site/Dest`：桌面端（Electron 自定义协议 / webview）经常**不带**这两个头，
- * 结果插件自己的宿主页取 token 会被自己拦成 403。等价判据改为：
- *   1) `Sec-Fetch-Site: cross-site` 直接拒绝（跨站 fetch 一定会带它）；
- *   2) 带 `Origin` 时，其 host 必须与 `Host` 一致（浏览器对跨源请求一定带 Origin）；
- *   3) 其余情况（含缺失 Sec-Fetch-*）放行——令牌本身只经同源页面内存持有，
- *      跨源读取仍被浏览器同源策略挡住。
- * 403 正文带上观测到的头，便于下次定位桌面端真实取值。
+ * 只信 `Sec-Fetch-*` 会误伤桌面端（Electron 经常不带这两个头），所以主判据改成**自定义请求头**：
+ * 跨源页面想带 `x-dsh-media-boot` 必须先过 CORS 预检，而本服务不响应预检 ⇒ 只有同源页能带。
+ * 辅以 `Sec-Fetch-Site`：显式拒绝 `cross-site` / `same-site`；缺失或 `same-origin` / `none` 都放行。
+ * 403 正文带观测值（site/dest/mode/origin），便于下次一眼定位。
  */
+const BOOT_HEADER = 'x-dsh-media-boot';
+
 export function bootAllowed(req) {
-  const headers = req?.headers || {};
-  const site = headers['sec-fetch-site'];
-  const dest = headers['sec-fetch-dest'];
-  const origin = headers.origin;
-  const host = headers.host;
-  const observed = { site: site ?? null, dest: dest ?? null, origin: origin ?? null, host: host ?? null };
-  if (site === 'cross-site') return { ok: false, reason: 'cross-site', observed };
-  if (typeof origin === 'string' && origin !== 'null') {
-    let originHost = null;
-    try { originHost = new URL(origin).host; } catch { return { ok: false, reason: 'bad-origin', observed }; }
-    if (!host || originHost !== host) return { ok: false, reason: 'origin-host-mismatch', observed };
-  }
-  // 桌面端可能没有 Sec-Fetch-*：缺省按同源处理；有值时只接受同源类取值。
-  if (site !== undefined && site !== 'same-origin' && site !== 'none') return { ok: false, reason: 'sec-fetch-site', observed };
-  if (dest !== undefined && dest !== 'empty') return { ok: false, reason: 'sec-fetch-dest', observed };
+  const h = req?.headers || {};
+  const site = h['sec-fetch-site'];
+  const dest = h['sec-fetch-dest'];
+  const mode = h['sec-fetch-mode'];
+  const origin = h.origin;
+  const observed = { site: site ?? null, dest: dest ?? null, mode: mode ?? null, origin: origin ?? null };
+  if (h[BOOT_HEADER] !== '1') return { ok: false, reason: 'missing-boot-header', observed };
+  if (site === 'cross-site' || site === 'same-site') return { ok: false, reason: 'sec-fetch-site', observed };
   return { ok: true, observed };
 }
 

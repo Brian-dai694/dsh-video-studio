@@ -93,13 +93,15 @@ test('router serves boot only to same-origin fetch and never exposes a tool HTTP
   };
 
   assert.equal((await call({ url: '/elsewhere' })).handled, false);
-  // 桌面端（Electron）可能不带 Sec-Fetch-*：缺省按同源放行，跨站仍拒绝。
-  const desktopLike = await call({ url: '/media-video/boot' });
+  // 缺自定义头一律拒绝；带自定义头且非跨站放行（桌面端不带 Sec-Fetch-* 也放行）。
+  const noHeader = await call({ url: '/media-video/boot' });
+  assert.equal(noHeader.status, 403);
+  const desktopLike = await call({ url: '/media-video/boot', headers: { 'x-dsh-media-boot': '1' } });
   assert.equal(desktopLike.status, 200);
-  const cross = await call({ url: '/media-video/boot', headers: { 'sec-fetch-site': 'cross-site', origin: 'https://evil.example' } });
+  const cross = await call({ url: '/media-video/boot', headers: { 'x-dsh-media-boot': '1', 'sec-fetch-site': 'cross-site', origin: 'https://evil.example' } });
   assert.equal(cross.status, 403);
   assert.match(cross.body, /Same-origin fetch required/);
-  const ok = await call({ url: '/media-video/boot', headers: { 'sec-fetch-site': 'same-origin', 'sec-fetch-dest': 'empty' } });
+  const ok = await call({ url: '/media-video/boot', headers: { 'x-dsh-media-boot': '1', 'sec-fetch-site': 'same-origin', 'sec-fetch-dest': 'empty' } });
   assert.equal(ok.status, 200);
   assert.match(ok.body, /accessToken/);
 

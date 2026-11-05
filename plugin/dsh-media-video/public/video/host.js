@@ -21,8 +21,16 @@ let generation = 0;
 
 async function boot() {
   if (accessToken) return accessToken;
-  const response = await fetch('/media-video/boot', { credentials: 'same-origin' });
-  if (!response.ok) throw Object.assign(new Error(`无法获取同源令牌（HTTP ${response.status}）`), { code: 'BOOT_FAILED' });
+  // 自定义头是同源判据：跨源页要带它必须先过 CORS 预检，而服务端不响应预检。
+  const response = await fetch('/media-video/boot', { credentials: 'same-origin', headers: { 'x-dsh-media-boot': '1' } });
+  if (!response.ok) {
+    let detail = '';
+    try {
+      const body = await response.json();
+      detail = [body.reason, body.observed ? JSON.stringify(body.observed) : ''].filter(Boolean).join(' · ');
+    } catch { /* 响应不是 JSON 就只报状态码 */ }
+    throw Object.assign(new Error(`无法获取同源令牌（HTTP ${response.status}）${detail ? '：' + detail : ''}`), { code: 'BOOT_FAILED' });
+  }
   accessToken = (await response.json()).accessToken;
   return accessToken;
 }

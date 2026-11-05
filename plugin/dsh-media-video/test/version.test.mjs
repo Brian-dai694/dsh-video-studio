@@ -63,7 +63,7 @@ test('boot 响应带 editorVersion，供宿主与审计对齐', async () => {
   const res = { writeHead() {}, end(value) { body = String(value); } };
   await router({
     url: '/media-video/boot', method: 'GET',
-    headers: { 'sec-fetch-site': 'same-origin', 'sec-fetch-dest': 'empty' },
+    headers: { 'x-dsh-media-boot': '1', 'sec-fetch-site': 'same-origin', 'sec-fetch-dest': 'empty' },
   }, res);
   const parsed = JSON.parse(body);
   assert.equal(parsed.editorVersion, VERSION);
