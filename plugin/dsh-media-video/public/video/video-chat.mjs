@@ -390,8 +390,9 @@ export function mountChat({ root, onLocate, onOpenSession, onSend, onRetry, init
       } else if (action.kind === 'fill-undo') {
         button.textContent = action.label || '填入撤销指令';
         if (action.hint) button.title = action.hint;
+        // 凭据必须由计划携带（dialog-model@2 起）；没有就置灰，不回查原始行。
         const prompt = item.undoPrompt || '';
-        if (!prompt) { button.disabled = true; button.title = '缺少撤销凭据（commandId/appliedRevision/afterDigest）'; }
+        if (!prompt) { button.disabled = true; button.title = '缺少撤销凭据（等待计划携带 commandId / appliedRevision / afterDigest）'; }
         button.addEventListener('click', () => {
           if (!composer || !prompt) return;
           composer.value = prompt;
@@ -417,12 +418,8 @@ export function mountChat({ root, onLocate, onOpenSession, onSend, onRetry, init
   }
 
   function appendRows(rows) {
-    const plans = buildDialogPlan(rows);
-    plans.forEach((plan, index) => {
-      // locate 与撤销文案来自行本身，不塞进共享模型（架构师：P1 只加 transport，不改数据结构）。
-      const row = rows[index] || {};
-      appendPlan({ ...plan, locate: row.locate || null, undoPrompt: row.undoPrompt || '' });
-    });
+    // 只渲染计划本身：locate / undo 必须由计划携带，绝不按 key 回查原始行。
+    for (const plan of buildDialogPlan(rows)) appendPlan(plan);
   }
 
   return {
