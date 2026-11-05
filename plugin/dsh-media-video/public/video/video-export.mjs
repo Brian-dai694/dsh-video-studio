@@ -17,6 +17,28 @@ export function drawFrame(ctx, width, height, project, elements, time, images) {
       ctx.drawImage(element, (width - w) / 2, (height - h) / 2, w, h);
     }
   }
+  // 字幕轨：独立轨道上的文字片段，按轨道顺序叠在画面之上（不是叠加对象）。
+  // 未覆盖区间保持透明/黑底，不做保持、循环或拉伸。
+  for (const track of plan.text ?? []) {
+    for (const clip of track.clips) {
+      const end = clip.start + clip.out - clip.in;
+      if (time < clip.start || time >= end) continue;
+      const style = clip.style || {};
+      const size = Math.max(12, height * (Number(style.size) > 0 ? Number(style.size) : 0.06));
+      const lines = String(clip.text ?? '').split('\n').slice(0, 6);
+      ctx.save();
+      ctx.font = `${style.weight ?? 600} ${size}px ${style.family ?? 'sans-serif'}`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'bottom';
+      ctx.fillStyle = style.color ?? '#fff';
+      ctx.shadowColor = '#000';
+      ctx.shadowBlur = 6;
+      lines.forEach((line, index) => {
+        ctx.fillText(line, width / 2, height * 0.92 - (lines.length - 1 - index) * size * 1.35);
+      });
+      ctx.restore();
+    }
+  }
   for (const item of [...project.overlays].sort((a, b) => (a.zIndex || 0) - (b.zIndex || 0))) {
     if (!item.visible || time < item.start || time >= item.end) continue;
     ctx.save();

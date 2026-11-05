@@ -34,3 +34,7 @@
 .track-clip.selected{box-shadow:0 0 0 2px #0071e3 inset}
 .track-clip.dragging{opacity:.85;cursor:grabbing;z-index:3}
 .minimal-editor .track-list,.minimal-editor .timeline{display:none}
+/* 字幕轨：与视频/音频区分色，轨道头仍带 M/S（字幕同样支持静音/独奏）。 */
+.track-row.text .track-kind { color: #7a5af8; }
+.track-row.text .track-lane { background: rgba(122, 90, 248, .06); }
+.track-clip.text { background: rgba(122, 90, 248, .18); border-color: rgba(122, 90, 248, .45); color: #4b32c3; }

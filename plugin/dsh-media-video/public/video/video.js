@@ -60,16 +60,17 @@ function renderTracks() {
       const left = (item.start / duration) * 100;
       const width = Math.max(2, ((item.out - item.in) / duration) * 100);
       const selected = state.selection === item.id ? ' selected' : '';
-      const label = `${item.name} · ${format(item.in)}–${format(item.out)}`;
-      return `<button type="button" class="track-clip ${track.kind}${selected}" data-clip="${item.id}" data-track="${track.id}" style="left:${left}%;width:${width}%" title="${escapeHtml(label)}">${escapeHtml(item.name || '片段')}</button>`;
+      const clipName = item.name || (item.text ? item.text.slice(0, 12) : '片段');
+      const label = `${clipName} · ${format(item.in)}–${format(item.out)}`;
+      return `<button type="button" class="track-clip ${track.kind}${selected}" data-clip="${item.id}" data-track="${track.id}" style="left:${left}%;width:${width}%" title="${escapeHtml(label)}">${escapeHtml(clipName)}</button>`;
     }).join('');
     return `<div class="track-row ${track.kind}${track.id === selectedTrackId ? ' active' : ''}" data-track-row="${track.id}">
       <div class="track-head">
-        <span class="track-kind">${track.kind === 'video' ? '视频' : '音频'}</span>
+        <span class="track-kind">${track.kind === 'video' ? '视频' : track.kind === 'audio' ? '音频' : '字幕'}</span>
         <span class="track-name">${escapeHtml(track.name)}</span>
         <button type="button" class="track-toggle${track.mute ? ' on' : ''}" data-track-mute="${track.id}" aria-label="静音 ${escapeHtml(track.name)}">M</button>
         <button type="button" class="track-toggle${track.solo ? ' on' : ''}" data-track-solo="${track.id}" aria-label="独奏 ${escapeHtml(track.name)}">S</button>
-        <input class="track-volume" data-track-volume="${track.id}" type="range" min="0" max="200" value="${Math.round((track.volume ?? 1) * 100)}" aria-label="音量 ${escapeHtml(track.name)}">
+        ${track.kind === 'text' ? '' : `<input class="track-volume" data-track-volume="${track.id}" type="range" min="0" max="200" value="${Math.round((track.volume ?? 1) * 100)}" aria-label="音量 ${escapeHtml(track.name)}">`}
       </div>
       <div class="track-lane" data-track-lane="${track.id}">${clips}</div>
     </div>`;
@@ -344,8 +345,10 @@ $('outPoint').onchange = () => { const item = clip(); if (item) apply({ type: 'm
 $('removeClip').onclick = () => { const item = clip(); if (item) apply({ type: 'media.video.clip.remove', clipId: item.id }); };
 $('addVideoTrack').onclick = () => apply({ type: 'media.video.track.add', track: { kind: 'video' } });
 $('addAudioTrack').onclick = () => apply({ type: 'media.video.track.add', track: { kind: 'audio' } });
+$('addTextTrack').onclick = () => apply({ type: 'media.video.track.add', track: { kind: 'text' } });
 function toggleOverlayComposer() {
-  if (!clip()) return toast('先导入视频再添加文字');
+  const textTrack = project().tracks.find(track => track.id === selectedTrackId && track.kind === 'text');
+  if (!clip() && !textTrack) return toast('先导入视频，或先选一条字幕轨');
   const composer = $('overlayComposer');
   composer.hidden = !composer.hidden;
   if (!composer.hidden) $('overlayText').focus();
@@ -354,6 +357,16 @@ function addOverlayText() {
   const input = $('overlayText');
   const text = input.value.trim();
   if (!text) { toast('请先输入叠加文字'); input.focus(); return; }
+  const selected = project().tracks.find(track => track.id === selectedTrackId);
+  // 选中字幕轨时，文字落成该轨上的一个片段（独立字幕轨）；否则仍是叠加对象。
+  if (selected && selected.kind === 'text') {
+    const start = project().timeline.currentTime ?? 0;
+    apply({ type: 'media.video.clip.add', clip: { trackId: selected.id, text, start, duration: 3 } });
+    input.value = '';
+    $('overlayComposer').hidden = true;
+    toast('已加入字幕轨片段，导出时会烧进成片');
+    return;
+  }
   apply({ type: 'media.video.overlay.add', overlay: { id: crypto.randomUUID(), kind: 'text', name: text.slice(0, 18), content: text } });
   input.value = '';
   $('overlayComposer').hidden = true;
