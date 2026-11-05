@@ -1,0 +1,107 @@
+// Trusted same-origin parent for the packaged video editor page.
+// It only wires the editor into the video relay: boot token, MessageChannel transport and
+// the relay polling loop. Tool calls stay in the model session (media_video_*); this page
+// never touches the DSH tool surface and never writes project files.
+import { createIframeTransport } from '/media-video/host/iframe-transport.mjs';
+import { startBrowserRelay } from '/media-video/host/browser-relay.mjs';
+
+const $ = id => document.getElementById(id);
+const show = value => { $('output').textContent = JSON.stringify(value, null, 2); };
+const fail = error => {
+  show({ code: error.code || 'UI_ERROR', message: error.message, ...(error.revision !== undefined ? { revision: error.revision } : {}), ...(error.outcomeUnknown ? { outcomeUnknown: true } : {}) });
+  $('status').textContent = `连接失败：${error.message}`;
+  $('status').dataset.state = 'error';
+};
+
+let accessToken = null;
+let transport = null;
+let relay = null;
+let connecting = null;
+let generation = 0;
+
+async function boot() {
+  if (accessToken) return accessToken;
+  const response = await fetch('/media-video/boot', { credentials: 'same-origin' });
+  if (!response.ok) throw Object.assign(new Error(`无法获取同源令牌（HTTP ${response.status}）`), { code: 'BOOT_FAILED' });
+  accessToken = (await response.json()).accessToken;
+  return accessToken;
+}
+
+async function connect() {
+  if (relay) return relay;
+  if (connecting) return connecting;
+  connecting = (async () => {
+    await boot();
+    transport = createIframeTransport({ iframe: $('editor'), origin: location.origin });
+    relay = await startBrowserRelay({
+      transport,
+      accessToken,
+      baseUrl: '/media-video/relay',
+      editorKind: 'video',
+      onError: error => { $('status').textContent = `连接异常：${error.message}；未完成命令的结果可能未知，请用原 commandId 查询`; },
+    });
+    $('status').textContent = `已绑定 video relay · 实例 ${relay.editorInstanceId} · page ${relay.pageId}`;
+    $('status').dataset.state = 'connected';
+    return relay;
+  })();
+  try { return await connecting; } finally { connecting = null; }
+}
+
+// Boot and relay registration can lose the race against the iframe finishing its own
+// module load; retry a few times before surfacing the failure to the panel.
+async function connectWithRetry(attempts = 4) {
+  let lastError;
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    try { return await connect(); }
+    catch (error) {
+      lastError = error;
+      $('status').textContent = `正在连接 video relay…（第 ${attempt + 1}/${attempts} 次）`;
+      await new Promise(resolve => setTimeout(resolve, 400 * (attempt + 1)));
+    }
+  }
+  throw lastError;
+}
+
+// Diagnostic read only: goes straight through the MessageChannel transport, not the tools.
+async function readState() {
+  const connection = await connect();
+  show(await transport.request({ type: 'editor.read_state', requestId: crypto.randomUUID(), editorInstanceId: connection.editorInstanceId }));
+}
+
+async function reconnect() {
+  const previous = relay?.editorInstanceId;
+  await relay?.stop();
+  relay = null; transport = null;
+  const current = await connect();
+  if (previous && previous !== current.editorInstanceId) {
+    show({ status: 'unknown', message: '编辑器实例已变化；原命令结果未知，禁止自动重放，请用原 commandId 查询' });
+  }
+}
+
+for (const [id, action] of [['connect', connect], ['reconnect', reconnect], ['read', readState]]) {
+  $(id)?.addEventListener('click', () => void action().catch(fail));
+}
+
+// Embedded as a sidebar panel there is no one to press "connect": bind on load so the
+// editor is registered with the relay before the user or the model touches it.
+$('editor').addEventListener('load', () => {
+  // A reloaded iframe is a new editor instance, so the old binding must not be reused.
+  if (relay) { void reconnect().catch(fail); return; }
+  const current = ++generation;
+  $('status').textContent = '编辑器已加载，正在自动连接 video relay…';
+  void connectWithRetry().catch(error => { if (current === generation) fail(error); });
+});
+
+// Parent client can read identity, never dispatch writes through this channel.
+window.addEventListener('message', async event => {
+  if (event.origin !== location.origin || event.source !== parent || event.data?.type !== 'media.binding.read') return;
+  const requestId = event.data.requestId;
+  try {
+    const connection = await connectWithRetry(2);
+    const state = await transport.request({ type: 'editor.read_state', requestId: crypto.randomUUID(), editorInstanceId: connection.editorInstanceId });
+    parent.postMessage({ type: 'media.binding.result', requestId, binding: { editorKind: 'video', projectId: state.documentId, documentId: state.documentId, editorInstanceId: connection.editorInstanceId, pageId: connection.pageId } }, location.origin);
+  } catch (error) {
+    parent.postMessage({ type: 'media.binding.result', requestId, error: error.message }, location.origin);
+  }
+});
+window.addEventListener('pagehide', () => { void relay?.stop(); });

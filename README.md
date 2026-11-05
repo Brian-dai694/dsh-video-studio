@@ -49,6 +49,18 @@ flowchart LR
 
 注意一个坑：MediaRecorder 产出的容器头**没有 duration 字段**，有效性按解码时长判断——播放器显示时长为空不等于导出失败。导入这类素材时同样按解码时长处理。
 
+## 插件包
+
+`plugin/dsh-media-video/` 是可独立安装的 DSH 插件包，只注册视频这一次工具集：
+
+| 工具 | 作用 |
+| --- | --- |
+| `media_video_read_state` | 读工程状态；首次带 `bind:true` 触发原生审批绑定 |
+| `media_video_apply_command` | 提交 `media.video.*` 命令，时间参数为整数微秒 |
+| `media_video_get_command_result` | 结果未知时回查，避免盲目重放 |
+| `media_video_export_start` / `media_video_export_status` | WebM 导出与状态 |
+
+路由前缀 `/media-video`，与图片插件包（`/media-image`）互不依赖、可同时安装。
 ## 快速开始
 
 ```bash
@@ -60,6 +72,7 @@ cd video && node --test tests/*.test.mjs
 | 路径 | 内容 |
 | --- | --- |
 | `video/` | 编辑器源码与测试：`video.js`、`video-state.mjs`、`video-bridge.mjs`、`video-export.mjs`、`video-capabilities.mjs` |
+| `plugin/dsh-media-video/` | 独立插件包：Host 工具、命令门控、relay 与视频页产物 |
 | `host/` | 视频宿主页、共享 iframe transport |
 | `contracts/` | 命令/状态契约、DSH 会话接口核查记录 |
 
@@ -70,3 +83,4 @@ cd video && node --test tests/*.test.mjs
 图片侧见 [dsh-image-studio](https://github.com/Brian-dai694/dsh-image-studio)。
 
 [![](https://img.shields.io/badge/powered_by-dsh-4D6BFE?style=flat-square&logo=deepseek&logoColor=white)](https://github.com/deepseek-ai/deepseek-harness)
+

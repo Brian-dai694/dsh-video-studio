@@ -1,0 +1,6 @@
+# dsh-media-video bundle patch: insert one Host plugin row.
+- insert:
+    - id: dsh-media-video
+      name: dsh-media-video
+      config:
+        dataDir: !!js dshHomePath('video-studio')
