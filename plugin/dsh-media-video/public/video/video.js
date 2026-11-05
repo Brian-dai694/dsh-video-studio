@@ -200,7 +200,19 @@ async function importVideo(file) {
       toast(legacy ? '媒体已重新连接（旧工程按文件名与大小匹配）' : '媒体已重新连接，工程内容保持不变');
       return;
     }
-    apply({ type: 'media.video.clip.add', clip: { id: crypto.randomUUID(), sourceRef: ref, name: file.name, duration, trackId: track.id, start: project().timeline.currentTime ?? 0 } });
+    // 写入失败（同位置已有片段等）必须把原因说给用户，不能"提示已加入、实际没加"。
+    const beforeCount = project().tracks.reduce((sum, item) => sum + item.clips.length, 0);
+    try {
+      apply({ type: 'media.video.clip.add', clip: { id: crypto.randomUUID(), sourceRef: ref, name: file.name, duration, trackId: track.id, start: project().timeline.currentTime ?? 0 } });
+    } catch (error) {
+      toast(`导入失败：${error && error.message ? error.message : '未知原因'}`);
+      return;
+    }
+    const afterCount = project().tracks.reduce((sum, item) => sum + item.clips.length, 0);
+    if (afterCount <= beforeCount) {
+      toast('导入失败：片段没有加入时间轴，请换个位置或先调整已有片段');
+      return;
+    }
     $('projectName').textContent = file.name.replace(/\.[^.]+$/, '');
     $('emptyStage').hidden = true;
     probeCapabilities();

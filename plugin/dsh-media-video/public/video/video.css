@@ -105,3 +105,15 @@ button:disabled{opacity:.5;cursor:not-allowed;transform:none}
 .io-options{background:var(--dsh-surface);border:1px solid var(--dsh-line);border-radius:var(--dsh-r-lg);box-shadow:0 4px 12px rgba(0,0,0,.08)}
 .minimal-editor .stage{box-shadow:0 4px 12px rgba(0,0,0,.08)}
 @media (prefers-reduced-motion: reduce){*{transition:none!important;animation:none!important;transform:none!important}}
+
+/* 视频编辑器必须显示时间轴：多轨与播放头是核心界面，minimal 外壳不能把它们藏掉。
+   只隐藏右侧检查器，保留时间轴头与轨道区。 */
+.minimal-editor .timeline-head,
+.minimal-editor .timeline,
+.minimal-editor .track-list { display: revert; }
+.minimal-editor .timeline-head { display: flex; }
+.minimal-editor .timeline { display: block; }
+.minimal-editor .track-list { display: block; }
+.minimal-editor .inspector { display: none; }
+.minimal-editor .viewer-column { height: auto; }
+.minimal-editor .workspace { height: auto; }

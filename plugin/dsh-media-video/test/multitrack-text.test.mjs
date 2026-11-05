@@ -141,3 +141,11 @@ test('同一素材可以再放一次：只有元素未加载时才走“媒体�
   assert.match(ui, /const wasLoaded = !!mediaFor\(ref\)/);
   assert.match(ui, /if \(matched && !wasLoaded\)/);
 });
+
+test('导入失败必须给出原因，且时间轴在多轨外壳里可见', () => {
+  const ui = readFileSync(new URL('../public/video/video.js', import.meta.url), 'utf8');
+  assert.match(ui, /导入失败：/);
+  assert.match(ui, /afterCount <= beforeCount/);
+  const css = readFileSync(new URL('../public/video/video.css', import.meta.url), 'utf8');
+  assert.match(css, /视频编辑器必须显示时间轴/);
+});
