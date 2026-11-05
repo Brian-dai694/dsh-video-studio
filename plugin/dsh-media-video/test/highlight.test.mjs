@@ -35,29 +35,29 @@ test('editor.highlight 只加描边：命中/缺失都返回，revision 与写�
   const { posted, port, state, applied } = harness({
     highlight: ({ objectIds, ttlMs }) => { seen.push({ objectIds, ttlMs }); return { matched: ['c1'], missing: ['nope'] }; },
   });
-  await send(port, { type: 'editor.highlight', requestId: 'h1', objectIds: ['c1', 'nope'], ttlMs: 800 });
+  await send(port, { type: 'editor.highlight', requestId: 'h1', editorInstanceId: 'i1', objectIds: ['c1', 'nope'], ttlMs: 800 });
   const reply = posted.find(message => message.requestId === 'h1');
   assert.ok(reply, '必须有应答');
   assert.equal(reply.ok, true);
-  assert.deepEqual(reply.result, { matched: ['c1'], missing: ['nope'] });
-  assert.deepEqual(seen[0], { objectIds: ['c1', 'nope'], ttlMs: 800 });
+  assert.deepEqual(reply.result, { ok: true, matched: ['c1'], missing: ['nope'] });
+  assert.deepEqual(seen[0], { objectIds: ['c1', 'nope'], ttlMs: 800 }, '800 在 200-5000 内应原样传递');
   assert.equal(state.revision, 7, '高亮不能 bump revision');
   assert.equal(applied(), 0, '高亮不能触发写入');
   assert.equal('documentId' in state && state.documentId, 'd1');
 });
 
-test('没有高亮能力时明确报 HIGHLIGHT_UNAVAILABLE，不假装成功', async () => {
+test('没有高亮能力时明确报 HIGHLIGHT_UNSUPPORTED，不假装成功', async () => {
   const { posted, port } = harness();
-  await send(port, { type: 'editor.highlight', requestId: 'h2', objectIds: ['c1'] });
+  await send(port, { type: 'editor.highlight', requestId: 'h2', editorInstanceId: 'i1', objectIds: ['c1'] });
   const reply = posted.find(message => message.requestId === 'h2');
   assert.equal(reply.ok, false);
-  assert.equal(reply.error.code, 'HIGHLIGHT_UNAVAILABLE');
+  assert.equal(reply.error.code, 'HIGHLIGHT_UNSUPPORTED');
 });
 
 test('objectIds 非法时拒绝，且不调用高亮', async () => {
   let called = 0;
   const { posted, port } = harness({ highlight: () => { called += 1; return {}; } });
-  await send(port, { type: 'editor.highlight', requestId: 'h3', objectIds: [] });
+  await send(port, { type: 'editor.highlight', requestId: 'h3', editorInstanceId: 'i1', objectIds: [] });
   const reply = posted.find(message => message.requestId === 'h3');
   assert.equal(reply.ok, false);
   assert.equal(reply.error.code, 'INVALID_REQUEST');
@@ -66,7 +66,6 @@ test('objectIds 非法时拒绝，且不调用高亮', async () => {
 
 test('editor.selection_changed 通知带 revision 与选中，节流到 ≥100ms 一条并保留最后的值', async () => {
   const { bridge, posted } = harness();
-  const at = [];
   bridge.notifySelection({ selectedObjectIds: ['c1'], objectKind: 'clip' });
   bridge.notifySelection({ selectedObjectIds: ['c2'], objectKind: 'clip' });
   bridge.notifySelection({ selectedObjectIds: ['c3'], objectKind: 'clip' });
@@ -76,5 +75,30 @@ test('editor.selection_changed 通知带 revision 与选中，节流到 ≥100ms
   assert.ok(notes.length >= 1 && notes.length <= 2, `节流后不应超过 2 条，实际 ${notes.length}`);
   assert.equal(notes.at(-1).revision, 7);
   assert.deepEqual(notes.at(-1).selectedObjectIds, ['c3'], '应保留最后一次的值');
+  assert.equal(notes.at(-1).objectKind, 'clip');
   assert.equal(notes.at(-1).requestId, undefined, '通知不是请求，不能带 requestId');
+  assert.equal('changedObjectIds' in notes.at(-1), false, '通知不带写入语义字段');
+});
+
+test('ttlMs 夹在 200-5000：过小放大、过大压小、缺省 2000、非数字拒绝', async () => {
+  const seen = [];
+  const { posted, port } = harness({ highlight: ({ ttlMs }) => { seen.push(ttlMs); return { matched: [], missing: [] }; } });
+  await send(port, { type: 'editor.highlight', requestId: 't1', editorInstanceId: 'i1', objectIds: ['c1'], ttlMs: 50 });
+  await send(port, { type: 'editor.highlight', requestId: 't2', editorInstanceId: 'i1', objectIds: ['c1'], ttlMs: 9000 });
+  await send(port, { type: 'editor.highlight', requestId: 't3', editorInstanceId: 'i1', objectIds: ['c1'] });
+  await send(port, { type: 'editor.highlight', requestId: 't4', editorInstanceId: 'i1', objectIds: ['c1'], ttlMs: 'abc' });
+  assert.deepEqual(seen, [200, 5000, 2000], '过小 200、过大 5000、缺省 2000');
+  const bad = posted.find(message => message.requestId === 't4');
+  assert.equal(bad.ok, false);
+  assert.equal(bad.error.code, 'INVALID_REQUEST');
+});
+
+test('实例不匹配时拒绝高亮，且不调用编辑器', async () => {
+  let called = 0;
+  const { posted, port } = harness({ highlight: () => { called += 1; return {}; } });
+  await send(port, { type: 'editor.highlight', requestId: 'i1', editorInstanceId: 'other', objectIds: ['c1'] });
+  const reply = posted.find(message => message.requestId === 'i1');
+  assert.equal(reply.ok, false);
+  assert.equal(reply.error.code, 'EDITOR_INSTANCE_MISMATCH');
+  assert.equal(called, 0);
 });

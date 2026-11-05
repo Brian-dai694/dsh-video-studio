@@ -4,6 +4,9 @@
 
 const CORE_TYPES = new Set(['editor.read_state', 'editor.apply_command', 'editor.get_command_result', 'editor.export_start', 'editor.export_status', 'editor.highlight']);
 const SELECTION_THROTTLE_MS = 100;
+const DEFAULT_HIGHLIGHT_TTL_MS = 2000;
+const MIN_HIGHLIGHT_TTL_MS = 200;
+const MAX_HIGHLIGHT_TTL_MS = 5000;
 const US = 1_000_000;
 const toSeconds = value => Number(value) / US;
 const failure = (code, message, details = {}) => Object.assign(new Error(message), { code, ...details });
@@ -107,13 +110,15 @@ export function createEditorBridge({ instanceId, getState, applyCommand, getComm
     }
     if (message.type === 'editor.highlight') {
       // 只改描边：不碰 selection、不 bump revision、不进历史。没有高亮能力就明确报错。
-      if (typeof highlight !== 'function') throw failure('HIGHLIGHT_UNAVAILABLE', '当前编辑器尚不支持高亮');
+      if (message.editorInstanceId !== instanceId) throw failure('EDITOR_INSTANCE_MISMATCH', '编辑器实例不匹配');
+      if (typeof highlight !== 'function') throw failure('HIGHLIGHT_UNSUPPORTED', '当前编辑器尚不支持高亮');
       const ids = message.objectIds;
       if (!Array.isArray(ids) || ids.length === 0 || ids.some(id => typeof id !== 'string' || !id)) throw failure('INVALID_REQUEST', 'objectIds 必须是非空字符串数组');
-      const ttl = message.ttlMs === undefined ? 1500 : Number(message.ttlMs);
-      if (!Number.isFinite(ttl) || ttl < 0 || ttl > 10000) throw failure('INVALID_REQUEST', 'ttlMs 必须在 0-10000 之间');
+      const requested = message.ttlMs === undefined ? DEFAULT_HIGHLIGHT_TTL_MS : Number(message.ttlMs);
+      if (!Number.isFinite(requested)) throw failure('INVALID_REQUEST', 'ttlMs 必须是数字');
+      const ttl = Math.min(MAX_HIGHLIGHT_TTL_MS, Math.max(MIN_HIGHLIGHT_TTL_MS, Math.round(requested)));
       const result = highlight({ objectIds: ids, ttlMs: ttl }) || {};
-      return { matched: [...(result.matched || [])], missing: [...(result.missing || [])] };
+      return { ok: true, matched: [...(result.matched || [])], missing: [...(result.missing || [])] };
     }
     if (message.type === 'editor.get_command_result') {
       if (typeof message.commandId !== 'string' || !message.commandId) throw failure('INVALID_REQUEST', '缺少 commandId');
@@ -160,12 +165,12 @@ export function createEditorBridge({ instanceId, getState, applyCommand, getComm
     lastSentAt = Date.now();
     try { port?.postMessage(payload); } catch { /* port closed */ }
   }
-  function notifySelection({ selectedObjectIds = [], objectKind = null, changedObjectIds = [] } = {}) {
+  function notifySelection({ selectedObjectIds = [], objectKind = null } = {}) {
     if (disposed || !port) return;
     const state = getState();
     pendingSelection = {
       type: 'editor.selection_changed', instanceId, revision: state.revision,
-      selectedObjectIds: [...selectedObjectIds], objectKind, changedObjectIds: [...changedObjectIds],
+      selectedObjectIds: [...selectedObjectIds], objectKind,
     };
     const wait = Math.max(0, SELECTION_THROTTLE_MS - (Date.now() - lastSentAt));
     if (selectionTimer) return;

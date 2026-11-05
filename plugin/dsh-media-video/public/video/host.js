@@ -92,10 +92,26 @@ $('editor').addEventListener('load', () => {
   void connectWithRetry().catch(error => { if (current === generation) fail(error); });
 });
 
-// Parent client can read identity, never dispatch writes through this channel.
+// Parent client can read identity and request a read-only highlight; it never dispatches writes.
 window.addEventListener('message', async event => {
-  if (event.origin !== location.origin || event.source !== parent || event.data?.type !== 'media.binding.read') return;
-  const requestId = event.data.requestId;
+  if (event.origin !== location.origin || event.source !== parent) return;
+  const type = event.data?.type;
+  const requestId = event.data?.requestId;
+  if (type === 'media.highlight.request') {
+    // 只转发描边高亮：不改 selection、不改 revision、不进历史（编辑器侧保证）。
+    const objectIds = event.data.objectIds;
+    try {
+      const connection = await connectWithRetry(2);
+      const message = { type: 'editor.highlight', requestId: crypto.randomUUID(), editorInstanceId: connection.editorInstanceId, objectIds };
+      if (event.data.ttlMs !== undefined) message.ttlMs = event.data.ttlMs;
+      const result = await transport.request(message);
+      parent.postMessage({ type: 'media.highlight.result', requestId, ok: true, matched: result?.matched || [], missing: result?.missing || [] }, location.origin);
+    } catch (error) {
+      parent.postMessage({ type: 'media.highlight.result', requestId, ok: false, error: { code: error.code || 'EDITOR_ERROR', message: error.message } }, location.origin);
+    }
+    return;
+  }
+  if (type !== 'media.binding.read') return;
   try {
     const connection = await connectWithRetry(2);
     const state = await transport.request({ type: 'editor.read_state', requestId: crypto.randomUUID(), editorInstanceId: connection.editorInstanceId });

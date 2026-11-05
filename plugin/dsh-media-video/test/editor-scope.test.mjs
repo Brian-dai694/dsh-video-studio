@@ -120,3 +120,34 @@ test('tool meta carries structured credentials so panels never parse the text li
   assert.equal(conflictMeta.errorCode, 'REVISION_CONFLICT');
   assert.equal(conflictMeta.commandId, 'c-stale');
 });
+
+test('meta.changedObjectIds reports exactly the edited objects, including undo', async () => {
+  const tools = new Map();
+  const bridge = {
+    editorKind: 'video',
+    readState: async () => ({ editorKind: 'video', editorInstanceId: 'i1', documentId: 'p1', revision: 2, stateDigest: 'd2', timeline: { duration: 1, fps: 30, currentTime: 0 }, tracks: [], clips: [], overlays: [], capabilities: {} }),
+    applyCommand: async input => {
+      const base = { editorKind: 'video', documentId: 'p1', commandId: input.commandId, revision: 3, stateDigest: 'd3', afterDigest: 'd3' };
+      if (input.command.type === 'media.video.clip.move') return { ...base, changedObjectIds: ['clip-1'] };
+      if (input.command.type === 'media.video.history.undo') return { ...base, changedObjectIds: ['clip-2'], objectKind: 'clip' };
+      return { ...base, changedObjectIds: [] };
+    },
+  };
+  registerMediaTools({ tools: { register: definition => tools.set(definition.name, definition), guard: () => {} } }, { bridge, approvals: createApprovalStore(), bindings: fixtureBindings });
+  const meta = (args, value) => tools.get('media_video_apply_command').output.presentationMeta(args, value);
+  const writeArgs = { editorKind: 'video', projectId: 'p1', instanceId: 'i1', commandId: 'c-w', expectedRevision: 2, operation: 'media.video.clip.move', params: {} };
+  const written = await tools.get('media_video_apply_command').execute(writeArgs, exec);
+  const writeMeta = meta(writeArgs, written);
+  assert.deepEqual(writeMeta.changedObjectIds, ['clip-1']);
+  assert.equal(writeMeta.objectKind, 'clip');
+  assert.equal(writeMeta.changedObjectIds.includes('clip-2'), false);
+  const undoArgs = { ...writeArgs, commandId: 'c-u', operation: 'media.video.history.undo', params: {} };
+  const undoMeta = meta(undoArgs, await tools.get('media_video_apply_command').execute(undoArgs, exec));
+  assert.deepEqual(undoMeta.changedObjectIds, ['clip-2']);
+  assert.equal(undoMeta.objectKind, 'clip');
+  const noopArgs = { ...writeArgs, commandId: 'c-n', operation: 'media.video.clip.trim' };
+  const noopMeta = meta(noopArgs, await tools.get('media_video_apply_command').execute(noopArgs, exec));
+  assert.equal('changedObjectIds' in noopMeta, false, 'no empty array');
+  assert.equal(writeMeta.stateDigest, written.stateDigest);
+  assert.match(tools.get('media_video_apply_command').output.render(writeArgs, written).map(block => block.text).join('\n'), /applied · c-w · R3/);
+});
