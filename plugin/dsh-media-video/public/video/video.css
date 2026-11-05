@@ -151,6 +151,12 @@ button:disabled{opacity:.5;cursor:not-allowed;transform:none}
 .tool-card:hover { border-color: var(--dsh-accent); }
 .tool-card:active { transform: scale(.99); }
 .tool-card strong { font-size: 12.5px; font-weight: 600; }
+.tool-card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.tool-badge { font-size: 10px; padding: 2px 7px; border-radius: 999px; border: 1px solid var(--dsh-line); color: var(--dsh-ink-2); white-space: nowrap; }
+.tool-badge.badge-applied { color: #1d6b32; border-color: rgba(29, 107, 50, .35); }
+.tool-badge.badge-rejected { color: #8a1c1c; border-color: rgba(138, 28, 28, .35); }
+.tool-badge.badge-pending { color: var(--dsh-ink-2); }
+.tool-badge.badge-unknown { color: #8a5a00; border-color: rgba(138, 90, 0, .45); background: #fff7e6; font-weight: 600; }
 .tool-card small { font-size: 11px; color: var(--dsh-ink-3); }
 .tool-card.is-flat { cursor: default; }
 .tool-card.is-flat:hover { border-color: var(--dsh-line); }

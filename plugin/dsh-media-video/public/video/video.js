@@ -15,6 +15,7 @@ let selectedTrackId = null;
 let importGeneration = 0;
 let zoom = 1;
 let activeIntent = null;
+let bridge = null;
 let toastTimer;
 const project = () => history.present;
 const allClips = () => project().tracks.flatMap(track => track.clips.map(clip => ({ ...clip, trackKind: track.kind })));
@@ -43,6 +44,7 @@ function render() {
     $('inPoint').value = Math.floor(item.in * 100); $('outPoint').value = Math.floor(item.out * 100);
   }
   renderTracks();
+  notifySelectionIfChanged();
   $('scrubber').value = duration ? String(Math.round(state.timeline.currentTime / duration * 1000)) : '0';
   $('playhead').style.left = `${72 + (duration ? state.timeline.currentTime / duration : 0) * Math.max(0, $('timeline').clientWidth - 73)}px`;
   const overlays = state.overlays;
@@ -405,14 +407,43 @@ $('readState').onclick = () => { const state = readState(project(), history, ins
 $('zoomIn').onclick = () => { zoom = Math.min(2, zoom + 0.1); $('video').style.transform = `scale(${zoom})`; }; $('zoomOut').onclick = () => { zoom = Math.max(0.7, zoom - 0.1); $('video').style.transform = `scale(${zoom})`; };
 render();
 probeCapabilities();
-createEditorBridge({
-  instanceId,
+bridge = createEditorBridge({  instanceId,
   getState: () => readState(project(), history, instanceId, capabilities()),
-  applyCommand: (command, context) => { const ids = [command.clipId, command.overlayId, command.clip?.id, command.overlay?.id].filter(Boolean); apply(command, context.commandId); return { changedObjectIds: [...new Set(ids)] }; },
+  applyCommand: (command, context) => { const ids = [command.clipId, command.overlayId, command.trackId, command.clip?.id, command.overlay?.id, command.track?.id, command.payload?.trackId].filter(Boolean); apply(command, context.commandId); return { changedObjectIds: [...new Set(ids)] }; },
   exportStart: message => startExport(message),
   exportStatus: message => exportStatusOf(message),
+  // editor.highlight：只加描边，不改 selection、不改 revision、不进历史。
+  highlight: ({ objectIds, ttlMs }) => highlightObjects(objectIds, ttlMs),
   expectedOrigin: location.origin === 'null' ? null : location.origin
 });
+
+function highlightObjects(objectIds, ttlMs) {
+  const matched = [];
+  const missing = [];
+  for (const id of objectIds) {
+    const node = $('trackList').querySelector(`[data-clip="${id}"]`) || $('overlayLane').querySelector(`[data-overlay="${id}"]`);
+    if (!node) { missing.push(id); continue; }
+    matched.push(id);
+    node.classList.add('clip-highlight');
+    clearTimeout(node.__highlightTimer);
+    node.__highlightTimer = setTimeout(() => node.classList.remove('clip-highlight'), ttlMs);
+  }
+  return { matched, missing };
+}
+
+// 选中变化 → 宿主只读通知（≥100ms 节流，不缓存成第二份文档状态）。
+let lastNotifiedSelection = null;
+function notifySelectionIfChanged() {
+  if (!bridge) return;
+  const selection = project().selection || null;
+  if (selection === lastNotifiedSelection) return;
+  lastNotifiedSelection = selection;
+  const item = selection ? allClips().find(entry => entry.id === selection) : null;
+  bridge.notifySelection({
+    selectedObjectIds: selection ? [selection] : [],
+    objectKind: item ? (item.text ? 'text-clip' : 'clip') : null,
+  });
+}
 
 // ── 0.2.0 P0：对话面板（消息映射 / 工具卡片 / 输入区 / 审批只读）──
 // 只做渲染与页面内定位：定位只改 selection 与描边，不改 revision、不进历史、不发 transport 消息。
@@ -429,7 +460,6 @@ const chat = mountChat({
     chat.append({ kind: 'assistant', text: `收到：「${payload.text}」。当前是本地模拟，未连接 DSH 会话；接入后同一条消息会交给会话执行。` });
   },
   initialMessages: [
-    { kind: 'system', text: '视频编辑器已就绪。对话是会话入口，任何写入仍走白名单命令与审批。' },
     { kind: 'assistant', text: '试试点工具卡片，我会定位到对应的时间线片段。\n\n- 例：`clip.add` 会带上轨道与片段身份\n- 例：`track.update` 会带上轨道 id' },
   ],
 });

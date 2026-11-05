@@ -79,7 +79,7 @@ export function createIframeTransport({ iframe, origin, timeoutMs = 10000,
   return {
     connect,
     async request(message, options = {}) {
-      if (!message || !['editor.read_state', 'editor.apply_command', 'editor.get_command_result', 'editor.export_start', 'editor.export_status'].includes(message.type)) throw failure('INVALID_REQUEST', '不支持此消息类型');
+      if (!message || !['editor.read_state', 'editor.apply_command', 'editor.get_command_result', 'editor.export_start', 'editor.export_status', 'editor.highlight'].includes(message.type)) throw failure('INVALID_REQUEST', '不支持此消息类型');
       if (options.allowedOrigin && new URL(options.allowedOrigin).origin !== targetOrigin) throw failure('INVALID_REQUEST', '请求来源配置不匹配');
       const hello = await connect();
       if (message.editorInstanceId !== hello.editorInstanceId) throw failure('EDITOR_INSTANCE_MISMATCH', '编辑器实例不匹配');

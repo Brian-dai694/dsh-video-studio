@@ -104,16 +104,28 @@ export function mountChat({ root, onLocate, onOpenSession, onSend, onRetry, init
     list.appendChild(node);
   }
 
-  function toolCard(tool) {
+  function toolCard(tool, badge) {
     const card = document.createElement('button');
     card.type = 'button';
     card.className = 'tool-card';
     card.setAttribute('data-tool-card', '');
+    const head = document.createElement('div');
+    head.className = 'tool-card-head';
     const title = document.createElement('strong');
     title.textContent = summariseTool(tool);
+    head.appendChild(title);
+    if (badge) {
+      const chip = document.createElement('span');
+      chip.className = `tool-badge badge-${badge}`;
+      // unknown 必须显眼且不能说成失败：结果未知 = 不要重放。
+      chip.textContent = badge === 'unknown' ? '结果未知 · 不要重放' : badge === 'pending' ? '执行中' : badge === 'rejected' ? '已拒绝' : '已执行';
+      chip.setAttribute('data-badge', badge);
+      head.appendChild(chip);
+    }
+    card.appendChild(head);
     const meta = document.createElement('small');
     meta.textContent = tool.trackId || tool.clipId ? '点击定位到时间线片段' : '无可定位对象';
-    card.append(title, meta);
+    card.appendChild(meta);
     if (tool.trackId || tool.clipId) {
       card.addEventListener('click', () => { onLocate?.({ trackId: tool.trackId, clipId: tool.clipId }); });
     } else {
@@ -158,7 +170,7 @@ export function mountChat({ root, onLocate, onOpenSession, onSend, onRetry, init
       body.innerHTML = renderMarkdownLite(message.text || '');
       item.append(who, body);
     } else if (message.kind === 'tool') {
-      item.appendChild(toolCard(message.tool || {}));
+      item.appendChild(toolCard(message.tool || {}, message.badge || null));
     } else if (message.kind === 'approval') {
       item.appendChild(approvalCard(message));
     } else if (message.kind === 'error') {
