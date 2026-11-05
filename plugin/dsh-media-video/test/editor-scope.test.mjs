@@ -69,7 +69,7 @@ test('export renders carry the exportId/artifactRef the model needs; writes stay
   const bridge = {
     editorKind: 'video',
     readState: async () => ({ editorKind: 'video', editorInstanceId: 'i1', documentId: 'p1', revision: 2, stateDigest: 'd2', timeline: { duration: 1, fps: 30, currentTime: 0 }, tracks: [], clips: [], overlays: [], capabilities: {} }),
-    applyCommand: async input => ({ editorKind: 'video', documentId: 'p1', commandId: input.commandId, revision: 3, changedObjectIds: [], stateDigest: 'd3' }),
+    applyCommand: async input => ({ editorKind: 'video', documentId: 'p1', commandId: input.commandId, revision: 3, changedObjectIds: [], stateDigest: 'd3', afterDigest: 'd3' }),
     startExport: async input => ({ editorKind: 'video', commandId: input.commandId, exportId: 'exp-1', status: 'ready', artifactRef: 'artifact://exp-1' }),
     getExportStatus: async () => ({ editorKind: 'video', exportId: 'exp-1', status: 'ready', artifactRef: 'artifact://exp-1' }),
   };
@@ -82,4 +82,41 @@ test('export renders carry the exportId/artifactRef the model needs; writes stay
   const applyArgs = { editorKind: 'video', projectId: 'p1', instanceId: 'i1', commandId: 'c-plain', expectedRevision: 2, operation: 'media.video.clip.move', params: {} };
   const applyText = render('media_video_apply_command', applyArgs, await tools.get('media_video_apply_command').execute(applyArgs, exec));
   assert.doesNotMatch(applyText, /exportId|artifactRef/);
+});
+
+test('tool meta carries structured credentials so panels never parse the text line', async () => {
+  const tools = new Map();
+  const bridge = {
+    editorKind: 'video',
+    readState: async () => ({ editorKind: 'video', editorInstanceId: 'i1', documentId: 'p1', revision: 2, stateDigest: 'd2', timeline: { duration: 1, fps: 30, currentTime: 0 }, tracks: [], clips: [], overlays: [], capabilities: {} }),
+    applyCommand: async input => ({ editorKind: 'video', documentId: 'p1', commandId: input.commandId, revision: 3, changedObjectIds: [], stateDigest: 'd3', afterDigest: 'd3' }),
+    startExport: async input => ({ editorKind: 'video', commandId: input.commandId, exportId: 'exp-1', status: 'ready', artifactRef: 'artifact://exp-1' }),
+    getExportStatus: async () => ({ editorKind: 'video', exportId: 'exp-1', status: 'ready', artifactRef: 'artifact://exp-1' }),
+  };
+  registerMediaTools({ tools: { register: definition => tools.set(definition.name, definition), guard: () => {} } }, { bridge, approvals: createApprovalStore(), bindings: fixtureBindings });
+  const meta = (name, args, value) => tools.get(name).output.presentationMeta(args, value);
+  const startArgs = { editorKind: 'video', projectId: 'p1', instanceId: 'i1', commandId: 'e-1', expectedRevision: 2, format: 'webm' };
+  const startMeta = meta('media_video_export_start', startArgs, await tools.get('media_video_export_start').execute(startArgs, exec));
+  assert.equal(startMeta.commandId, 'e-1');
+  assert.equal(startMeta.exportId, 'exp-1');
+  assert.equal(startMeta.artifactRef, 'artifact://exp-1');
+  assert.equal(startMeta.format, 'webm');
+  const statusArgs = { editorKind: 'video', projectId: 'p1', instanceId: 'i1', exportId: 'exp-1' };
+  const statusMeta = meta('media_video_export_status', statusArgs, await tools.get('media_video_export_status').execute(statusArgs, exec));
+  assert.equal(statusMeta.exportId, 'exp-1');
+  assert.equal(statusMeta.artifactRef, 'artifact://exp-1');
+  const applyArgs = { editorKind: 'video', projectId: 'p1', instanceId: 'i1', commandId: 'c-meta', expectedRevision: 2, operation: 'media.video.clip.move', params: {} };
+  const applied = await tools.get('media_video_apply_command').execute(applyArgs, exec);
+  const applyMeta = meta('media_video_apply_command', applyArgs, applied);
+  assert.equal(applyMeta.commandId, 'c-meta');
+  assert.equal(applyMeta.appliedRevision, 3);
+  assert.equal(applyMeta.afterDigest, 'd3');
+  // 文本行格式不变：人读仍是 status · commandId · R<revision>。
+  assert.equal(tools.get('media_video_apply_command').output.render(applyArgs, applied).map(block => block.text).join('\n'), 'applied · c-meta · R3');
+  // 失败时给稳定错误码，而不是让面板去正则匹配文本。
+  const conflict = await tools.get('media_video_apply_command').execute({ ...applyArgs, commandId: 'c-stale', expectedRevision: 1 }, exec);
+  const conflictMeta = meta('media_video_apply_command', { ...applyArgs, commandId: 'c-stale', expectedRevision: 1 }, conflict);
+  assert.equal(conflict.status, 'rejected');
+  assert.equal(conflictMeta.errorCode, 'REVISION_CONFLICT');
+  assert.equal(conflictMeta.commandId, 'c-stale');
 });
