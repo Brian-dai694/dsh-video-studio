@@ -33,7 +33,7 @@ test('视频轨的 volume 进入 read_state 的 effective.gain，不再报 null'
 });
 
 test('导出音频链按视频轨自身 volume 接入，不再写死 1', () => {
-  assert.match(exportSource, /attachOnce\(clip\.sourceRef, track\.volume \?\? 1\)/, '视频/音频轨都必须用轨道音量');
+  assert.match(exportSource, /attachAudible\(clip\.sourceRef, track\.volume \?\? 1\)/, '视频/音频轨都必须用轨道音量');
   assert.equal(/attach\(elements\.get\(clip\.sourceRef\), 1\)/.test(exportSource), false, '不许再写死 1');
 });
 
@@ -99,4 +99,9 @@ test('UI 层的空工程文案与引擎一致，不再说“工程中没有可�
   const ui = readUi(join(here, '../public/video/video.js'), 'utf8');
   assert.match(ui, /纯音频工程暂不支持导出视频，请至少放入一个视频片段/);
   assert.equal(ui.includes("'工程中没有可导出的视频片段'"), false);
+});
+
+test('静音轨不接音频链，也不参与重复音源判定', () => {
+  assert.equal(exportSource.includes('const attachAudible ='), true);
+  assert.match(exportSource, /if \(\(volume \?\? 1\) > 0\) attachOnce/);
 });

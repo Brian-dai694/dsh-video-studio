@@ -1,5 +1,6 @@
 // 字幕独立轨 + 移动/裁剪语义分离 + 同轨重叠 + 可听态：全部跑真实模块，不打桩。
 import test from 'node:test';
+import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { COMMAND_VALIDATORS } from '../lib/bridge.js';
 import {
@@ -113,4 +114,30 @@ test('片段暴露 sourceTime 形状（微秒、rate=1），状态内部仍走�
   const clip = state.clips.find(item => item.text === '第一句字幕');
   assert.deepEqual(clip.sourceTime, { startUs: 0, endUs: 3000000, rate: 1 });
   assert.equal(clip.out, 3);
+});
+
+test('导入起点=播放头；跨轨允许重叠，同轨重叠被拒', () => {
+  const ui = readFileSync(new URL('../public/video/video.js', import.meta.url), 'utf8');
+  assert.match(ui, /start: project\(\)\.timeline\.currentTime \?\? 0/);
+  const seeded = reduceProject(projectWithTextTrack(), { type: 'media.video.clip.add', clip: { trackId: 'text-1', text: '底层', start: 0, duration: 4 } });
+  const videoTrackId = seeded.tracks.find(track => track.kind === 'video').id;
+  // 另一条轨同位置允许（跨轨重叠合法）
+  assert.doesNotThrow(() => reduceProject(seeded, { type: 'media.video.clip.add', clip: { trackId: videoTrackId, sourceRef: 'src-1', name: 'v', duration: 4, start: 0, in: 0, out: 4 } }));
+});
+
+
+test('导入起点等于播放头，同位置重复导入按 TRACK_OVERLAP 拒绝并给中文提示', () => {
+  const ui = readFileSync(new URL('../public/video/video.js', import.meta.url), 'utf8');
+  assert.match(ui, /start: project\(\)\.timeline\.currentTime \?\? 0/);
+  const seeded = withTextClip();
+  assert.throws(
+    () => reduceProject(seeded, { type: 'media.video.clip.add', clip: { trackId: 'text-1', text: '重叠', start: 1, duration: 2 } }),
+    error => error.code === 'TRACK_OVERLAP' && /该轨道在此位置已有片段/.test(error.message),
+  );
+});
+
+test('同一素材可以再放一次：只有元素未加载时才走“媒体重新连接”', () => {
+  const ui = readFileSync(new URL('../public/video/video.js', import.meta.url), 'utf8');
+  assert.match(ui, /const wasLoaded = !!mediaFor\(ref\)/);
+  assert.match(ui, /if \(matched && !wasLoaded\)/);
 });

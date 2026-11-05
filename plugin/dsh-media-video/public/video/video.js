@@ -179,6 +179,8 @@ async function importVideo(file) {
   // 多轨允许多个片段；只有内容完全相同才走重连，其余按新片段加入所选轨道。
   const matched = exact ?? legacy;
   const ref = matched ? matched.clip.sourceRef : incoming;
+  // 元素此前是否已经加载，决定“重连”还是“再放一次”。
+  const wasLoaded = !!mediaFor(ref);
   const element = mediaFor(ref) ?? attachMedia(ref, file, kind);
   let track = project().tracks.find(item => item.id === selectedTrackId && item.kind === kind) || project().tracks.find(item => item.kind === kind);
   if (!track) { apply({ type: 'media.video.track.add', track: { kind } }); track = project().tracks.find(item => item.kind === kind); }
@@ -191,14 +193,14 @@ async function importVideo(file) {
     if (generation !== importGeneration) return;
     if (!Number.isFinite(duration) || duration <= 0) { toast('媒体时长无效，无法加入时间轴'); return; }
     element.currentTime = 0;
-    if (matched) {
+    if (matched && !wasLoaded) {
       $('projectName').textContent = file.name.replace(/\.[^.]+$/, '');
       $('emptyStage').hidden = true;
       probeCapabilities();
       toast(legacy ? '媒体已重新连接（旧工程按文件名与大小匹配）' : '媒体已重新连接，工程内容保持不变');
       return;
     }
-    apply({ type: 'media.video.clip.add', clip: { id: crypto.randomUUID(), sourceRef: ref, name: file.name, duration, trackId: track.id, start: project().timeline.duration } });
+    apply({ type: 'media.video.clip.add', clip: { id: crypto.randomUUID(), sourceRef: ref, name: file.name, duration, trackId: track.id, start: project().timeline.currentTime ?? 0 } });
     $('projectName').textContent = file.name.replace(/\.[^.]+$/, '');
     $('emptyStage').hidden = true;
     probeCapabilities();

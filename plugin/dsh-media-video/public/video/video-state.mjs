@@ -46,7 +46,7 @@ function assertNoOverlap(track, start, end, excludeId) {
     if (clip.id === excludeId) continue;
     const clipEnd = round(clip.start + clip.out - clip.in);
     if (from < clipEnd - 1e-6 && to > clip.start + 1e-6) {
-      const error = new Error('TRACK_OVERLAP: 同一轨道上的片段时间重叠');
+      const error = new Error('该轨道在此位置已有片段（TRACK_OVERLAP），请换个位置或先调整已有片段');
       error.code = 'TRACK_OVERLAP';
       throw error;
     }

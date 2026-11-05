@@ -146,8 +146,10 @@ function buildAudioGraph(plan, elements, audioContext) {
     if (ref) seenAudioRefs.add(ref);
     attach(elements.get(ref), volume ?? 1);
   };
-  for (const track of plan.video) for (const clip of track.clips) attachOnce(clip.sourceRef, track.volume ?? 1);
-  for (const track of plan.audio) for (const clip of track.clips) attachOnce(clip.sourceRef, track.volume ?? 1);
+  // 有效增益为 0 的轨（静音）不接音频链：既没有声音，也不该被当成“重复发声”。
+  const attachAudible = (ref, volume) => { if ((volume ?? 1) > 0) attachOnce(ref, volume); };
+  for (const track of plan.video) for (const clip of track.clips) attachAudible(clip.sourceRef, track.volume ?? 1);
+  for (const track of plan.audio) for (const clip of track.clips) attachAudible(clip.sourceRef, track.volume ?? 1);
   return { destination, sources, hasAudio: plan.audio.length > 0, samplePeak, peakValue: () => peak, peakDb: () => peakToDb(peak) };
 }
 
