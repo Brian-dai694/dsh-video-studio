@@ -18,11 +18,18 @@ export function toEditorCommand(command) {
       return { type: command.type };
     case 'media.video.clip.add':
       if (typeof p.sourceRef !== 'string' || !p.sourceRef) throw failure('INVALID_REQUEST', '缺少 sourceRef');
-      return { type: 'media.video.clip.add', clip: { id: p.clipId || null, sourceRef: p.sourceRef, name: p.name || p.sourceRef, duration: toSeconds(Math.max(Number(p.outUs) || 0, Number(p.inUs) || 0)), in: toSeconds(Number(p.inUs) || 0), out: toSeconds(Number(p.outUs) || 0) } };
+      return { type: 'media.video.clip.add', clip: { id: p.clipId || null, sourceRef: p.sourceRef, name: p.name || p.sourceRef, duration: toSeconds(Math.max(Number(p.outUs) || 0, Number(p.inUs) || 0)), in: toSeconds(Number(p.inUs) || 0), out: toSeconds(Number(p.outUs) || 0), start: toSeconds(Number(p.startUs) || 0), trackId: p.trackId || undefined } };
     case 'media.video.clip.trim':
       return { type: 'media.video.clip.trim', clipId: p.clipId, in: p.inUs === undefined ? undefined : toSeconds(p.inUs), out: p.outUs === undefined ? undefined : toSeconds(p.outUs) };
     case 'media.video.clip.move':
-      return { type: 'media.video.clip.move', clipId: p.clipId, start: toSeconds(p.startUs) };
+      return { type: 'media.video.clip.move', clipId: p.clipId, start: p.startUs === undefined ? undefined : toSeconds(p.startUs), trackId: p.trackId || undefined };
+    case 'media.video.track.add':
+      if (!['video', 'audio'].includes(p.kind)) throw failure('INVALID_REQUEST', '轨道类型必须是 video 或 audio');
+      return { type: 'media.video.track.add', track: { kind: p.kind, name: p.name, id: p.trackId || undefined } };
+    case 'media.video.track.remove':
+      return { type: 'media.video.track.remove', trackId: p.trackId };
+    case 'media.video.track.update':
+      return { type: 'media.video.track.update', trackId: p.trackId, patch: { mute: p.mute, solo: p.solo, volume: p.volume, name: p.name } };
     case 'media.video.clip.remove':
       return { type: 'media.video.clip.remove', clipId: p.clipId };
     case 'media.video.overlay.add':

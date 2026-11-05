@@ -26,21 +26,25 @@
       </div>
       <div class="transport">
         <div class="transport-left"><button id="play" class="round-btn" title="播放">▶</button><span class="timecode" id="timecode">00:00.00 <em>/</em> 00:00.00</span></div>
-        <div class="transport-right"><button id="undo" class="tool-btn" title="撤销" disabled>↶</button><button id="redo" class="tool-btn" title="重做" disabled>↷</button><span class="divider"></span><button id="addText" class="tool-btn">T <span>文字</span></button><label class="tool-btn">▧ <span>图片</span><input id="imageInput" type="file" accept="image/*" hidden></label></div>
+        <div class="transport-right"><button id="undo" class="tool-btn" title="撤销" disabled>↶</button><button id="redo" class="tool-btn" title="重做" disabled>↷</button><span class="divider"></span><button id="addText" class="tool-btn" aria-label="添加文字">T <span>文字</span></button><label class="tool-btn" aria-label="添加图片">▧ <span>图片</span><input id="imageInput" type="file" accept="image/*" hidden></label></div>
+      </div>
+      <div class="overlay-composer" id="overlayComposer" hidden>
+        <input id="overlayText" type="text" placeholder="输入叠加文字，回车添加" aria-label="叠加文字内容">
+        <button id="overlayAdd" class="export-btn" aria-label="添加文字叠加">添加</button>
       </div>
       <input id="scrubber" type="range" min="0" max="1000" value="0" aria-label="播放进度">
-      <div class="timeline-head"><div class="timeline-title">时间轴 <span id="durationLabel">00:00</span></div><div class="timeline-tools"><button id="removeClip" class="text-btn" disabled>删除片段</button><span class="divider"></span><button id="zoomOut" class="tool-btn">−</button><button id="zoomIn" class="tool-btn">＋</button></div></div>
+      <div class="timeline-head"><div class="timeline-title">时间轴 <span id="durationLabel">00:00</span></div><div class="timeline-tools"><button id="addVideoTrack" class="text-btn">＋ 视频轨</button><button id="addAudioTrack" class="text-btn">＋ 音频轨</button><button id="removeClip" class="text-btn" disabled>删除片段</button><span class="divider"></span><button id="zoomOut" class="tool-btn">−</button><button id="zoomIn" class="tool-btn">＋</button></div></div>
       <div class="timeline" id="timeline">
         <div class="ruler" id="ruler"></div>
-        <div class="track-row"><span class="track-label">视频</span><div class="track-lane" id="videoLane"><div class="clip" id="clip"><span class="clip-title" id="clipTitle">视频片段</span><input aria-label="片段入点" id="inPoint" type="range" min="0" max="100" value="0"><input aria-label="片段出点" id="outPoint" type="range" min="0" max="100" value="100"></div></div></div>
-        <div class="track-row"><span class="track-label">叠加</span><div class="track-lane overlay-lane" id="overlayLane"><span class="lane-empty">文字与图片叠加</span></div></div>
+        <div class="track-list" id="trackList"></div>
+        <div id="overlayLane" hidden></div>
         <div class="playhead" id="playhead"><i></i></div>
 
       </div>
     </section>
     <aside class="inspector">
       <div class="panel-heading"><div><span class="eyebrow">工程状态</span><h2>检查器</h2></div><span class="revision-pill" id="revisionPill">R0</span></div>
-      <div class="inspector-section"><h3>片段</h3><div class="property-row"><span>媒体</span><strong id="sourceName">未导入</strong></div><div class="property-row"><span>入点</span><strong id="inValue">—</strong></div><div class="property-row"><span>出点</span><strong id="outValue">—</strong></div><div class="property-row"><span>长度</span><strong id="lengthValue">—</strong></div></div>
+      <div class="inspector-section"><h3>片段</h3><div class="property-row"><span>媒体</span><strong id="sourceName">未导入</strong></div><div class="property-row"><span>入点</span><strong id="inValue">—</strong></div><div class="property-row"><span>出点</span><strong id="outValue">—</strong></div><div class="property-row"><span>长度</span><strong id="lengthValue">—</strong></div><input aria-label="片段入点" id="inPoint" type="range" min="0" max="100" value="0"><input aria-label="片段出点" id="outPoint" type="range" min="0" max="100" value="100"></div>
       <div class="inspector-section"><div class="section-title"><h3>叠加对象</h3><span id="overlayCount">0</span></div><div id="overlayList" class="overlay-list"><div class="empty-list">还没有叠加对象</div></div></div>
       <div class="inspector-section"><div class="section-title"><h3>协作模式</h3><span class="safe-dot">本地模拟</span></div><div class="mode-switch"><button class="mode-option active" data-mode="assist">人工确认</button><button class="mode-option" data-mode="autonomous">授权自主</button></div><div class="mode-note" id="modeNote">每次写入先预览并由你确认。</div><button id="grantCapability" class="secondary-btn">授权低风险文字叠加（本地模拟）</button><div class="intent-box" id="intentBox"><label for="intentInput">对话意图</label><textarea id="intentInput" rows="2" placeholder="例如：在片头加上欢迎文字"></textarea><button id="parseIntent" class="secondary-btn">生成操作预览</button></div><div id="commandPreview" class="command-preview" hidden></div><div class="audit-box"><span>最近审计</span><code id="auditDigest">等待操作</code></div></div>
       <div class="inspector-section capability-section"><h3>导出能力</h3><div class="property-row"><span>WebM</span><strong id="webmCapability">检测中</strong></div><div class="property-row"><span>MP4</span><strong class="unknown">未验证</strong></div><div class="capability-note">媒体文件不经过协作中继。工程快照只保存媒体引用。</div></div>
@@ -48,6 +52,7 @@
     </aside>
   </main>
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <div id="mediaPool" hidden></div>
   <script type="module" src="video.js"></script>
 </body>
 </html>

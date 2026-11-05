@@ -1,25 +1,24 @@
 import { createProject, createHistory, commit, undo, redo, reduceProject, readState, snapshotProject, stateDigest, canUndo, canRedo } from './video-state.mjs';
 import { detectWebmCapability } from './video-capabilities.mjs';
 import { createEditorBridge } from './video-bridge.mjs';
-import { recordComposition } from './video-export.mjs';
+import { recordComposition, assertForeground } from './video-export.mjs';
+import { sourceRefFor, digestOf, sameContent, legacyMatches } from './video-sources.mjs';
 
 const $ = id => document.getElementById(id);
 const instanceId = crypto.randomUUID();
 let history = createHistory(createProject());
 let mode = 'assist';
-const localSimulation = true;
 const autonomousCapabilities = new Set();
-let videoUrl = null;
-let mediaRecorder = null;
 let webmCapability = { status: 'checking', mimeType: '', reason: '正在探测浏览器能力' };
+let selectedTrackId = null;
 let importGeneration = 0;
 let zoom = 1;
 let activeIntent = null;
 let toastTimer;
 const project = () => history.present;
-const clip = () => project().tracks.find(track => track.kind === 'video').clips[0] || null;
+const allClips = () => project().tracks.flatMap(track => track.clips.map(clip => ({ ...clip, trackKind: track.kind })));
+const clip = () => allClips().find(item => item.id === project().selection) || allClips().find(item => item.trackKind === 'video') || null;
 const format = seconds => { const value = Math.max(0, Number(seconds) || 0); return `${String(Math.floor(value / 60)).padStart(2, '0')}:${String(Math.floor(value % 60)).padStart(2, '0')}.${String(Math.floor(value * 100 % 100)).padStart(2, '0')}`; };
-const sourceRef = file => `local:${file.name}:${file.size}:${file.lastModified}`;
 function toast(message) { const node = $('toast'); node.textContent = message; node.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => node.classList.remove('show'), 2400); }
 function apply(command, commandId = null) { if (exportBusy) throw Object.assign(new Error('导出期间请等待完成后再修改工程'), { code: 'EXPORT_BUSY' }); if (command.type === 'media.video.history.undo' || command.type === 'media.video.history.redo') { const backwards = command.type.endsWith('.undo'); if (!(backwards ? canUndo(history) : canRedo(history))) throw Object.assign(new Error('没有可撤销或重做的修改'), { code: 'HISTORY_EMPTY' }); history = backwards ? undo(history) : redo(history); render(); return readState(project(), history, instanceId, capabilities()); } const before = readState(project(), history, instanceId, capabilities()); const next = reduceProject(project(), command); next.lastCommandId = commandId; history = commit(history, next); const after = readState(project(), history, instanceId, capabilities()); $('auditDigest').textContent = `${before.stateDigest.slice(-8)} → ${after.stateDigest.slice(-8)} · R${before.revision}→R${after.revision}`; render(); return after; }
 function recordPlaybackTime(time) { const next = reduceProject(project(), { type: 'media.video.timeline.seek', time }); history = { ...history, present: next }; }
@@ -36,15 +35,13 @@ function render() {
   $('inValue').textContent = item ? format(item.in) : '—'; $('outValue').textContent = item ? format(item.out) : '—'; $('lengthValue').textContent = item ? format(item.out - item.in) : '—';
   $('removeClip').disabled = !item; $('exportVideo').disabled = webmCapability.status !== 'available' || !item;
   $('webmCapability').textContent = webmCapability.status === 'available' ? `可用 (${webmCapability.mimeType})` : webmCapability.status === 'checking' ? '检测中' : '不可用'; $('webmCapability').className = webmCapability.status === 'available' ? '' : 'unknown'; $('webmCapability').title = webmCapability.reason;
-  $('emptyStage').hidden = !!videoUrl; $('video').style.display = videoUrl ? 'block' : 'none';
-  $('clip').style.display = item ? 'block' : 'none';
+  const hasMedia = media.size > 0;
+  $('emptyStage').hidden = hasMedia; $('video').style.display = hasMedia ? 'block' : 'none';
   if (item) {
-    $('clip').style.left = `${(item.start / Math.max(duration, 1)) * 100}%`;
-    $('clip').style.width = `${((item.out - item.in) / Math.max(duration, 1)) * 100}%`;
-    $('clipTitle').textContent = item.name;
     $('inPoint').max = Math.floor(item.duration * 100); $('outPoint').max = Math.floor(item.duration * 100);
     $('inPoint').value = Math.floor(item.in * 100); $('outPoint').value = Math.floor(item.out * 100);
   }
+  renderTracks();
   $('scrubber').value = duration ? String(Math.round(state.timeline.currentTime / duration * 1000)) : '0';
   $('playhead').style.left = `${72 + (duration ? state.timeline.currentTime / duration : 0) * Math.max(0, $('timeline').clientWidth - 73)}px`;
   const overlays = state.overlays;
@@ -54,6 +51,65 @@ function render() {
   drawOverlays();
 }
 function escapeHtml(text) { return String(text).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]); }
+// 多轨时间线：每条轨道一行，片段按 start/长度定位；轨道顺序即合成层级（后者在上）。
+// 静音/独奏/音量直接写回工程，跨轨拖拽按落点行改 trackId，同类型校验由状态层负责。
+function renderTracks() {
+  const state = project(), duration = Math.max(state.timeline.duration, 0.001);
+  $('trackList').innerHTML = state.tracks.map(track => {
+    const clips = track.clips.map(item => {
+      const left = (item.start / duration) * 100;
+      const width = Math.max(2, ((item.out - item.in) / duration) * 100);
+      const selected = state.selection === item.id ? ' selected' : '';
+      const label = `${item.name} · ${format(item.in)}–${format(item.out)}`;
+      return `<button type="button" class="track-clip ${track.kind}${selected}" data-clip="${item.id}" data-track="${track.id}" style="left:${left}%;width:${width}%" title="${escapeHtml(label)}">${escapeHtml(item.name || '片段')}</button>`;
+    }).join('');
+    return `<div class="track-row ${track.kind}${track.id === selectedTrackId ? ' active' : ''}" data-track-row="${track.id}">
+      <div class="track-head">
+        <span class="track-kind">${track.kind === 'video' ? '视频' : '音频'}</span>
+        <span class="track-name">${escapeHtml(track.name)}</span>
+        <button type="button" class="track-toggle${track.mute ? ' on' : ''}" data-track-mute="${track.id}" aria-label="静音 ${escapeHtml(track.name)}">M</button>
+        <button type="button" class="track-toggle${track.solo ? ' on' : ''}" data-track-solo="${track.id}" aria-label="独奏 ${escapeHtml(track.name)}">S</button>
+        <input class="track-volume" data-track-volume="${track.id}" type="range" min="0" max="200" value="${Math.round((track.volume ?? 1) * 100)}" aria-label="音量 ${escapeHtml(track.name)}">
+      </div>
+      <div class="track-lane" data-track-lane="${track.id}">${clips}</div>
+    </div>`;
+  }).join('');
+  for (const row of $('trackList').querySelectorAll('[data-track-row]')) row.addEventListener('pointerdown', event => { if (event.target.closest('[data-clip]')) return; selectedTrackId = row.dataset.trackRow; renderTracks(); });
+  for (const node of $('trackList').querySelectorAll('[data-clip]')) node.addEventListener('pointerdown', event => startClipDrag(event, node));
+  for (const node of $('trackList').querySelectorAll('[data-track-mute]')) node.addEventListener('click', () => { const track = project().tracks.find(item => item.id === node.dataset.trackMute); apply({ type: 'media.video.track.update', trackId: node.dataset.trackMute, patch: { mute: !track?.mute } }); });
+  for (const node of $('trackList').querySelectorAll('[data-track-solo]')) node.addEventListener('click', () => { const track = project().tracks.find(item => item.id === node.dataset.trackSolo); apply({ type: 'media.video.track.update', trackId: node.dataset.trackSolo, patch: { solo: !track?.solo } }); });
+  for (const node of $('trackList').querySelectorAll('[data-track-volume]')) node.addEventListener('change', () => apply({ type: 'media.video.track.update', trackId: node.dataset.trackVolume, patch: { volume: Number(node.value) / 100 } }));
+}
+function startClipDrag(event, node) {
+  event.preventDefault();
+  const clipId = node.dataset.clip;
+  const startX = event.clientX;
+  const origin = project().tracks.flatMap(track => track.clips.map(item => ({ track, item }))).find(entry => entry.item.id === clipId);
+  if (!origin) return;
+  node.classList.add('dragging');
+  const lanes = [...$('trackList').querySelectorAll('[data-track-lane]')];
+  const move = e => {
+    node.style.transform = `translateX(${e.clientX - startX}px)`;
+    const row = document.elementFromPoint(e.clientX, e.clientY)?.closest('[data-track-row]');
+    for (const lane of lanes) lane.classList.toggle('drop-target', !!row && lane.dataset.trackLane === row.dataset.trackRow && row.dataset.trackRow !== origin.track.id);
+  };
+  const finish = e => {
+    window.removeEventListener('pointermove', move);
+    window.removeEventListener('pointerup', finish);
+    node.classList.remove('dragging');
+    node.style.transform = '';
+    for (const lane of lanes) lane.classList.remove('drop-target');
+    const row = document.elementFromPoint(e.clientX, e.clientY)?.closest('[data-track-row]');
+    const laneWidth = node.closest('[data-track-lane]')?.clientWidth || 1;
+    const duration = Math.max(project().timeline.duration, 0.001);
+    const shifted = Math.max(0, origin.item.start + ((e.clientX - startX) / laneWidth) * duration);
+    const patch = { type: 'media.video.clip.move', clipId, start: Number(shifted.toFixed(3)) };
+    if (row && row.dataset.trackRow !== origin.track.id) patch.trackId = row.dataset.trackRow;
+    if (Math.abs(shifted - origin.item.start) > 0.01 || patch.trackId) apply(patch);
+  };
+  window.addEventListener('pointermove', move);
+  window.addEventListener('pointerup', finish);
+}
 const overlayImages = new Map();
 function overlayImage(ref) {
   if (!ref) return null;
@@ -77,7 +133,7 @@ function drawOverlays() {
     else if (item.kind === 'image') { const image = overlayImage(item.sourceRef); if (image) { const width = Math.min(stage.clientWidth / 3, image.naturalWidth); const height = width * image.naturalHeight / image.naturalWidth; ctx.drawImage(image, -width / 2, -height / 2, width, height); } }
     ctx.restore();
   }
-  if (videoUrl && video.readyState >= 2) $('emptyStage').hidden = true;
+  if (media.size && video.readyState >= 2) $('emptyStage').hidden = true;
 }
 function undoAction() { const before = readState(project(), history, instanceId, capabilities()); history = undo(history); const after = readState(project(), history, instanceId, capabilities()); if (before.stateDigest !== after.stateDigest) $('auditDigest').textContent = `${before.stateDigest} → ${after.stateDigest} · 撤销 R${before.revision}→R${after.revision} · 本地模拟`; render(); }
 function redoAction() { const before = readState(project(), history, instanceId, capabilities()); history = redo(history); const after = readState(project(), history, instanceId, capabilities()); if (before.stateDigest !== after.stateDigest) $('auditDigest').textContent = `${before.stateDigest} → ${after.stateDigest} · 重做 R${before.revision}→R${after.revision} · 本地模拟`; render(); }
@@ -96,46 +152,68 @@ function resolveMediaDuration(video) {
     try { video.currentTime = 1e7; } catch { finish(NaN); }
   });
 }
-function importVideo(file) {
+const media = new Map(); // sourceRef → { element, kind, url }
+function mediaFor(ref) {
+  return ref ? media.get(ref)?.element ?? null : null;
+}
+function attachMedia(ref, file, kind) {
+  const element = document.createElement(kind === 'audio' ? 'audio' : 'video');
+  element.preload = 'auto';
+  element.playsInline = true;
+  element.dataset.sourceRef = ref;
+  $('mediaPool').appendChild(element);
+  media.set(ref, { element, kind, url: URL.createObjectURL(file) });
+  return element;
+}
+async function importVideo(file) {
   if (!file) return;
-  const video = $('video');
   const generation = ++importGeneration;
-  const ref = sourceRef(file);
-  const existing = clip();
-  if (existing && existing.sourceRef !== ref) { toast('当前工程已有另一段视频；请先删除片段，或打开匹配的工程文件'); return; }
-  if (videoUrl) URL.revokeObjectURL(videoUrl);
-  videoUrl = URL.createObjectURL(file);
+  const digest = await digestOf(await file.arrayBuffer());
+  if (generation !== importGeneration) return;
+  const kind = file.type.startsWith('audio/') ? 'audio' : 'video';
+  const incoming = sourceRefFor({ name: file.name, size: file.size, digest });
+  const entries = project().tracks.flatMap(track => track.clips.map(clip => ({ track, clip })));
+  const exact = entries.find(entry => sameContent(entry.clip.sourceRef, file, digest));
+  const legacy = entries.find(entry => legacyMatches(entry.clip.sourceRef, file));
+  // 多轨允许多个片段；只有内容完全相同才走重连，其余按新片段加入所选轨道。
+  const matched = exact ?? legacy;
+  const ref = matched ? matched.clip.sourceRef : incoming;
+  const element = mediaFor(ref) ?? attachMedia(ref, file, kind);
+  let track = project().tracks.find(item => item.id === selectedTrackId && item.kind === kind) || project().tracks.find(item => item.kind === kind);
+  if (!track) { apply({ type: 'media.video.track.add', track: { kind } }); track = project().tracks.find(item => item.kind === kind); }
   attachedMediaRef = ref;
   $('emptyStage').hidden = false;
-  $('emptyStage').querySelector('strong').textContent = '正在载入视频…';
-  video.onloadedmetadata = async () => {
+  $('emptyStage').querySelector('strong').textContent = '正在载入媒体…';
+  const finish = async () => {
     if (generation !== importGeneration) return;
-    const duration = await resolveMediaDuration(video);
+    const duration = await resolveMediaDuration(element);
     if (generation !== importGeneration) return;
-    if (!Number.isFinite(duration) || duration <= 0) { toast('视频时长无效，无法加入时间轴'); return; }
-    video.currentTime = 0;
-    if (existing) {
+    if (!Number.isFinite(duration) || duration <= 0) { toast('媒体时长无效，无法加入时间轴'); return; }
+    element.currentTime = 0;
+    if (matched) {
       $('projectName').textContent = file.name.replace(/\.[^.]+$/, '');
       $('emptyStage').hidden = true;
       probeCapabilities();
-      toast('媒体已重新连接，工程内容保持不变');
+      toast(legacy ? '媒体已重新连接（旧工程按文件名与大小匹配）' : '媒体已重新连接，工程内容保持不变');
       return;
     }
-    const id = crypto.randomUUID();
-    apply({ type: 'media.video.clip.add', clip: { id, sourceRef: ref, name: file.name, duration } });
+    apply({ type: 'media.video.clip.add', clip: { id: crypto.randomUUID(), sourceRef: ref, name: file.name, duration, trackId: track.id, start: project().timeline.duration } });
     $('projectName').textContent = file.name.replace(/\.[^.]+$/, '');
     $('emptyStage').hidden = true;
     probeCapabilities();
-    toast('视频已载入，仅在本机预览');
+    toast(kind === 'audio' ? '音频已加入音频轨' : '视频已加入视频轨');
   };
-  video.onerror = () => {
+  element.onerror = () => {
     if (generation !== importGeneration) return;
     $('emptyStage').hidden = false;
-    $('emptyStage').querySelector('strong').textContent = '无法载入此视频';
-    toast('无法解码此视频格式');
+    $('emptyStage').querySelector('strong').textContent = '无法载入此媒体';
+    toast('无法解码此媒体格式');
   };
-  video.src = videoUrl;
-  video.load();
+  // 先绑定元数据/错误事件，再设置 src：设置 src 后事件可能立刻触发，晚绑定会漏掉。
+  if (element.readyState >= 1) await finish();
+  else element.onloadedmetadata = finish;
+  const entry = media.get(ref);
+  if (!element.src && entry) { element.src = entry.url; element.load(); }
 }
 function makeIntent(raw) {
   const normalized = String(raw ?? '').trim();
@@ -186,12 +264,12 @@ function openSnapshot(file) {
   const reader = new FileReader(); reader.onload = () => {
     try {
       const saved = JSON.parse(reader.result);
-      if (saved.format !== 'media-video-project' || saved.version !== 1) throw new Error('工程格式或版本不支持');
+      if (saved.format !== 'media-video-project' || ![1, 2].includes(saved.version)) throw new Error('工程格式或版本不支持');
       history = commit(history, reduceProject(project(), { type: 'media.video.project.restore', project: saved.project }));
-      const sameMedia = !!saved.media?.sourceRef && saved.media.sourceRef === attachedMediaRef;
+      const sameMedia = !!saved.media?.sourceRef && media.has(saved.media.sourceRef);
       if (!sameMedia) {
-        if (videoUrl) URL.revokeObjectURL(videoUrl);
-        videoUrl = null; attachedMediaRef = null;
+        for (const entry of media.values()) { try { entry.element.pause(); } catch { /* detached */ } URL.revokeObjectURL(entry.url); }
+        media.clear(); attachedMediaRef = null;
         $('video').removeAttribute('src'); $('video').load();
       }
       $('projectName').textContent = saved.project.source?.name?.replace(/\.[^.]+$/, '') || '未命名工程';
@@ -215,6 +293,8 @@ function startExport(message) {
   if (!capabilities().webm) throw Object.assign(new Error('当前浏览器不支持 WebM 录制'), { code: 'EXPORT_UNAVAILABLE' });
   if (!clip()) throw Object.assign(new Error('工程中没有可导出的视频片段'), { code: 'EXPORT_EMPTY' });
   if (exportBusy) throw Object.assign(new Error('已有导出正在进行'), { code: 'EXPORT_BUSY' });
+  // 后台标签的 rAF 会被节流，合成循环不推进就没有帧可录；在这里直接拒绝，别让用户空等。
+  assertForeground();
   const job = { exportId: `export-${crypto.randomUUID()}`, commandId: message.commandId, format, status: 'running', progress: 0, artifactRef: null, bytes: 0, durationSeconds: 0, audio: null, error: null, fileName: 'video-export.webm' };
   exportJobs.set(job.exportId, job);
   runExport(job);
@@ -223,13 +303,13 @@ function startExport(message) {
 async function runExport(job) {
   exportBusy = true; $('exportVideo').disabled = true; $('exportVideo').textContent = '导出中…';
   try {
-    const range = clip();
-    const result = await recordComposition({ project: structuredClone(project()), video: $('video'), mimeType: webmCapability.mimeType, onProgress: value => { job.progress = value; $('exportVideo').textContent = `导出 ${Math.round(value * 100)}%`; } });
+    const elements = new Map([...media.entries()].map(([ref, entry]) => [ref, entry.element]));
+    const result = await recordComposition({ project: structuredClone(project()), elements, mimeType: webmCapability.mimeType, onProgress: value => { job.progress = value; $('exportVideo').textContent = `导出 ${Math.round(value * 100)}%`; } });
     const url = URL.createObjectURL(result.blob);
-    Object.assign(job, { status: 'ready', progress: 1, artifactRef: url, bytes: result.blob.size, durationSeconds: Number((range.out - range.in).toFixed(3)), audio: result.audioTracks > 0 });
+    Object.assign(job, { status: 'ready', progress: 1, artifactRef: url, bytes: result.blob.size, durationSeconds: result.durationSeconds, audio: result.hasAudio === true });
     Object.assign(document.createElement('a'), { href: url, download: job.fileName }).click();
     setTimeout(() => URL.revokeObjectURL(url), 120000);
-    toast(`WebM 已生成 · ${Math.round(result.blob.size / 1024)} KB · ${result.audioTracks ? '含源音轨' : '素材无音轨'}`);
+    toast(`WebM 已生成 · ${Math.round(result.blob.size / 1024)} KB · ${result.hasAudio ? '含源音轨' : '素材无音轨'}`);
   } catch (error) { job.status = 'failed'; job.error = error.message || '导出失败'; toast(`导出失败：${job.error}`); }
   finally { exportBusy = false; $('exportVideo').textContent = '导出 WebM'; render(); }
 }
@@ -261,9 +341,30 @@ $('undo').onclick = undoAction; $('redo').onclick = redoAction;
 $('scrubber').oninput = event => { const time = Number(event.target.value) / 1000 * project().timeline.duration; $('video').currentTime = (clip()?.in || 0) + time; recordPlaybackTime(time); render(); };
 $('inPoint').onchange = () => { const item = clip(); if (item) apply({ type: 'media.video.clip.trim', clipId: item.id, in: Number($('inPoint').value) / 100, out: item.out }); };
 $('outPoint').onchange = () => { const item = clip(); if (item) apply({ type: 'media.video.clip.trim', clipId: item.id, in: item.in, out: Number($('outPoint').value) / 100 }); };
-$('clip').addEventListener('pointerdown', event => { if (event.target.matches('input')) return; const startX = event.clientX, oldStart = clip()?.start || 0; $('clip').setPointerCapture(event.pointerId); const move = e => { const seconds = (e.clientX - startX) / Math.max(1, $('videoLane').clientWidth) * Math.max(project().timeline.duration, 1); $('clip').style.transform = `translateX(${e.clientX - startX}px)`; $('clip').dataset.move = String(Math.max(0, oldStart + seconds)); }; const end = () => { $('clip').removeEventListener('pointermove', move); $('clip').removeEventListener('pointerup', end); $('clip').style.transform = ''; const item = clip(); if (item && $('clip').dataset.move) apply({ type: 'media.video.clip.move', clipId: item.id, start: Number($('clip').dataset.move) }); }; $('clip').addEventListener('pointermove', move); $('clip').addEventListener('pointerup', end, { once: true }); });
 $('removeClip').onclick = () => { const item = clip(); if (item) apply({ type: 'media.video.clip.remove', clipId: item.id }); };
-$('addText').onclick = () => { if (!clip()) return toast('先导入视频再添加文字'); const text = window.prompt('输入叠加文字'); if (text?.trim()) apply({ type: 'media.video.overlay.add', overlay: { id: crypto.randomUUID(), kind: 'text', name: text.trim().slice(0, 18), content: text.trim() } }); };
+$('addVideoTrack').onclick = () => apply({ type: 'media.video.track.add', track: { kind: 'video' } });
+$('addAudioTrack').onclick = () => apply({ type: 'media.video.track.add', track: { kind: 'audio' } });
+function toggleOverlayComposer() {
+  if (!clip()) return toast('先导入视频再添加文字');
+  const composer = $('overlayComposer');
+  composer.hidden = !composer.hidden;
+  if (!composer.hidden) $('overlayText').focus();
+}
+function addOverlayText() {
+  const input = $('overlayText');
+  const text = input.value.trim();
+  if (!text) { toast('请先输入叠加文字'); input.focus(); return; }
+  apply({ type: 'media.video.overlay.add', overlay: { id: crypto.randomUUID(), kind: 'text', name: text.slice(0, 18), content: text } });
+  input.value = '';
+  $('overlayComposer').hidden = true;
+  toast('文字叠加已加入，导出时会烧进成片');
+}
+$('addText').onclick = toggleOverlayComposer;
+$('overlayAdd').onclick = addOverlayText;
+$('overlayText').addEventListener('keydown', event => {
+  if (event.key === 'Enter') { event.preventDefault(); addOverlayText(); }
+  if (event.key === 'Escape') { $('overlayComposer').hidden = true; }
+});
 $('overlayList').onclick = event => { const id = event.target.dataset.removeOverlay; if (id) apply({ type: 'media.video.overlay.remove', overlayId: id }); };
 $('saveProject').onclick = saveSnapshot; $('openProject').onclick = () => $('projectInput').click(); $('projectInput').addEventListener('change', event => { openSnapshot(event.currentTarget.files?.[0]); event.currentTarget.value = ''; }); $('exportVideo').onclick = exportWebm;
 $('parseIntent').onclick = () => { try { if (!clip()) throw new Error('先导入视频再生成编辑意图'); showIntent(makeIntent($('intentInput').value)); } catch (error) { toast(error.message); } };
