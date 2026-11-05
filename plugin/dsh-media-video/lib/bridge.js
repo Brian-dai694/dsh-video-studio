@@ -25,7 +25,7 @@ const finite = (value, name, { min = -Infinity, max = Infinity } = {}) => {
   }
 };
 
-const VIDEO_COMMANDS = new Set(['media.video.clip.add', 'media.video.clip.trim', 'media.video.clip.move', 'media.video.clip.remove', 'media.video.overlay.add', 'media.video.overlay.update', 'media.video.history.undo', 'media.video.history.redo']);
+const VIDEO_COMMANDS = new Set(['media.video.clip.add', 'media.video.clip.trim', 'media.video.clip.move', 'media.video.clip.remove', 'media.video.track.add', 'media.video.track.remove', 'media.video.track.update', 'media.video.overlay.add', 'media.video.overlay.update', 'media.video.history.undo', 'media.video.history.redo']);
 const fieldsOnly = (payload, fields) => {
   const unknown = Object.keys(payload).find(key => !fields.includes(key));
   if (unknown) throw new MediaBridgeError('INVALID_REQUEST', `Unsupported payload field: ${unknown}. Read the operation parameter contract.`);
@@ -57,8 +57,33 @@ function validateVideoCommand(command) {
   switch (command.type) {
     case 'media.video.clip.add':
       opaqueId(p.sourceRef, 'sourceRef');
-      finite(p.startUs, 'startUs', { min: 0 }); finite(p.inUs, 'inUs', { min: 0 }); finite(p.outUs, 'outUs', { min: 0 });
-      if (p.outUs <= p.inUs) throw new MediaBridgeError('INVALID_REQUEST', 'outUs must be greater than inUs.');
+      if (p.trackId !== undefined) opaqueId(p.trackId, 'trackId');
+      if (p.startUs !== undefined) finite(p.startUs, 'startUs', { min: 0 });
+      // in/out define the trim range together: half a range is ambiguous, so reject it
+      // here instead of letting the editor guess. Omitting both imports the whole source.
+      if ((p.inUs === undefined) !== (p.outUs === undefined)) {
+        throw new MediaBridgeError('INVALID_REQUEST', 'Provide both inUs and outUs, or neither (import the whole source).');
+      }
+      if (p.inUs !== undefined) {
+        finite(p.inUs, 'inUs', { min: 0 }); finite(p.outUs, 'outUs', { min: 0 });
+        if (p.outUs <= p.inUs) throw new MediaBridgeError('INVALID_REQUEST', 'outUs must be greater than inUs.');
+      }
+      break;
+    case 'media.video.track.add':
+      if (!['video', 'audio'].includes(p.kind)) throw new MediaBridgeError('INVALID_REQUEST', 'Track kind must be video or audio.');
+      if (p.trackId !== undefined) opaqueId(p.trackId, 'trackId');
+      if (p.name !== undefined && (typeof p.name !== 'string' || p.name.length > 120)) throw new MediaBridgeError('INVALID_REQUEST', 'Track name must be a string up to 120 characters.');
+      break;
+    case 'media.video.track.remove':
+      opaqueId(p.trackId, 'trackId');
+      break;
+    case 'media.video.track.update':
+      opaqueId(p.trackId, 'trackId');
+      if (p.mute !== undefined && typeof p.mute !== 'boolean') throw new MediaBridgeError('INVALID_REQUEST', 'mute must be boolean.');
+      if (p.solo !== undefined && typeof p.solo !== 'boolean') throw new MediaBridgeError('INVALID_REQUEST', 'solo must be boolean.');
+      if (p.volume !== undefined) finite(p.volume, 'volume', { min: 0, max: 2 });
+      if (p.name !== undefined && (typeof p.name !== 'string' || p.name.length > 120)) throw new MediaBridgeError('INVALID_REQUEST', 'Track name must be a string up to 120 characters.');
+      if (['mute', 'solo', 'volume', 'name'].every(key => p[key] === undefined)) throw new MediaBridgeError('INVALID_REQUEST', 'Provide at least one of mute, solo, volume or name.');
       break;
     case 'media.video.clip.trim':
       opaqueId(p.clipId, 'clipId');
@@ -67,7 +92,10 @@ function validateVideoCommand(command) {
       if (p.outUs !== undefined) finite(p.outUs, 'outUs', { min: 0 });
       break;
     case 'media.video.clip.move':
-      opaqueId(p.clipId, 'clipId'); finite(p.startUs, 'startUs', { min: 0 });
+      opaqueId(p.clipId, 'clipId');
+      if (p.trackId !== undefined) opaqueId(p.trackId, 'trackId');
+      if (p.startUs !== undefined) finite(p.startUs, 'startUs', { min: 0 });
+      if (p.startUs === undefined && p.trackId === undefined) throw new MediaBridgeError('INVALID_REQUEST', 'Provide startUs, trackId, or both to move a clip.');
       break;
     case 'media.video.clip.remove':
       opaqueId(p.clipId, 'clipId');

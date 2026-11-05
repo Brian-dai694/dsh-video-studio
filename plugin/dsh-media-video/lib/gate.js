@@ -87,12 +87,12 @@ export function createSessionBindings({ resolvePage } = {}) {
 
 // Autonomous mode may only run reversible, low-risk edits on the current revision.
 export const AUTONOMOUS_CAPABILITIES = {
-  video: new Set(['media.video.clip.move', 'media.video.clip.trim', 'media.video.overlay.add', 'media.video.overlay.update']),
+  video: new Set(['media.video.clip.move', 'media.video.clip.trim', 'media.video.overlay.add', 'media.video.overlay.update', 'media.video.track.update']),
 };
 
 // Always human-confirmed: importing local media, destructive deletes, overwrite export.
 export const HIGH_RISK_OPERATIONS = {
-  video: new Set(['media.video.clip.add', 'media.video.clip.remove']),
+  video: new Set(['media.video.clip.add', 'media.video.clip.remove', 'media.video.track.remove']), // track removal deletes its clips
 };
 
 export const TOOL_KINDS = {
