@@ -2,7 +2,8 @@
 // The parent page owns the relay; this module only serves the transferred MessagePort,
 // validates the envelope and forwards structured commands to the editor state source.
 
-const CORE_TYPES = new Set(['editor.read_state', 'editor.apply_command', 'editor.get_command_result', 'editor.export_start', 'editor.export_status']);
+const CORE_TYPES = new Set(['editor.read_state', 'editor.apply_command', 'editor.get_command_result', 'editor.export_start', 'editor.export_status', 'editor.highlight']);
+const SELECTION_THROTTLE_MS = 100;
 const US = 1_000_000;
 const toSeconds = value => Number(value) / US;
 const failure = (code, message, details = {}) => Object.assign(new Error(message), { code, ...details });
@@ -43,7 +44,7 @@ export function toEditorCommand(command) {
 }
 
 export function createEditorBridge({ instanceId, getState, applyCommand, getCommandResult = null,
-  exportStart = null, exportStatus = null, targetWindow = globalThis, expectedOrigin = null }) {
+  exportStart = null, exportStatus = null, highlight = null, targetWindow = globalThis, expectedOrigin = null }) {
   if (typeof instanceId !== 'string' || !instanceId) throw new TypeError('instanceId is required');
   if (typeof getState !== 'function' || typeof applyCommand !== 'function') throw new TypeError('getState/applyCommand are required');
   const completed = new Map();
@@ -55,7 +56,7 @@ export function createEditorBridge({ instanceId, getState, applyCommand, getComm
     return { ok: false, error: { code: error?.code || 'EDITOR_ERROR', message: error?.message || '编辑器执行失败', revision: error?.revision, outcomeUnknown: !!error?.outcomeUnknown } };
   }
 
-  const objectIds = state => new Set([...(state?.clips || []).map(item => item.id), ...(state?.overlays || []).map(item => item.id)]);
+  const objectIds = state => new Set([...(state?.clips || []).map(item => item.id), ...(state?.overlays || []).map(item => item.id), ...(state?.tracks || []).map(item => item.id)]);
 
   async function applyOne(message) {
     const state = getState();
@@ -104,6 +105,16 @@ export function createEditorBridge({ instanceId, getState, applyCommand, getComm
       if (message.type === 'editor.export_start' && message.expectedRevision !== state.revision) throw failure('REVISION_CONFLICT', '导出前工程已变化');
       return handler(message);
     }
+    if (message.type === 'editor.highlight') {
+      // 只改描边：不碰 selection、不 bump revision、不进历史。没有高亮能力就明确报错。
+      if (typeof highlight !== 'function') throw failure('HIGHLIGHT_UNAVAILABLE', '当前编辑器尚不支持高亮');
+      const ids = message.objectIds;
+      if (!Array.isArray(ids) || ids.length === 0 || ids.some(id => typeof id !== 'string' || !id)) throw failure('INVALID_REQUEST', 'objectIds 必须是非空字符串数组');
+      const ttl = message.ttlMs === undefined ? 1500 : Number(message.ttlMs);
+      if (!Number.isFinite(ttl) || ttl < 0 || ttl > 10000) throw failure('INVALID_REQUEST', 'ttlMs 必须在 0-10000 之间');
+      const result = highlight({ objectIds: ids, ttlMs: ttl }) || {};
+      return { matched: [...(result.matched || [])], missing: [...(result.missing || [])] };
+    }
     if (message.type === 'editor.get_command_result') {
       if (typeof message.commandId !== 'string' || !message.commandId) throw failure('INVALID_REQUEST', '缺少 commandId');
       if (typeof getCommandResult === 'function') return getCommandResult(message.commandId);
@@ -137,11 +148,40 @@ export function createEditorBridge({ instanceId, getState, applyCommand, getComm
 
   targetWindow.addEventListener?.('message', onWindowMessage);
 
+  // 只读通知：编辑器选中变化 → 宿主（≥100ms 节流）。不是请求，没有 requestId，宿主不得回写。
+  let selectionTimer = null;
+  let pendingSelection = null;
+  let lastSentAt = 0;
+  function flushSelection() {
+    selectionTimer = null;
+    if (!pendingSelection) return;
+    const payload = pendingSelection;
+    pendingSelection = null;
+    lastSentAt = Date.now();
+    try { port?.postMessage(payload); } catch { /* port closed */ }
+  }
+  function notifySelection({ selectedObjectIds = [], objectKind = null, changedObjectIds = [] } = {}) {
+    if (disposed || !port) return;
+    const state = getState();
+    pendingSelection = {
+      type: 'editor.selection_changed', instanceId, revision: state.revision,
+      selectedObjectIds: [...selectedObjectIds], objectKind, changedObjectIds: [...changedObjectIds],
+    };
+    const wait = Math.max(0, SELECTION_THROTTLE_MS - (Date.now() - lastSentAt));
+    if (selectionTimer) return;
+    if (wait === 0) flushSelection();
+    else selectionTimer = setTimeout(flushSelection, wait);
+  }
+
   return {
     get instanceId() { return instanceId; },
     get connected() { return !!port; },
+    notifySelection,
     dispose() {
       disposed = true;
+      if (selectionTimer) clearTimeout(selectionTimer);
+      selectionTimer = null;
+      pendingSelection = null;
       targetWindow.removeEventListener?.('message', onWindowMessage);
       port?.close?.();
       port = null;
