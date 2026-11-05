@@ -76,3 +76,15 @@ test('compositePlan 的 video 分支必须带出 volume（否则导出端拿不�
   assert.equal(plan.video[0].volume, 1, '默认音量要出现在计划里');
   assert.equal(compositePlan({ ...project, tracks: [{ ...video, volume: 0.5 }] }).video[0].volume, 0.5);
 });
+
+test('静音视频轨只静声音：画面仍在计划里，音量归零', () => {
+  const base = createProject();
+  const video = Object.assign(createTrack('video', 0), { id: 'v-mute' });
+  const project = { ...base, tracks: [video], clips: [] };
+  const plan = compositePlan(project);
+  assert.equal(plan.video.length, 1, '静音后画面必须还在');
+  assert.equal(plan.video[0].volume, 1);
+  const muted = compositePlan({ ...project, tracks: [{ ...video, mute: true }] });
+  assert.equal(muted.video.length, 1, '静音不等于隐藏，画面必须保留');
+  assert.equal(muted.video[0].volume, 0, '静音后该轨增益为 0');
+});

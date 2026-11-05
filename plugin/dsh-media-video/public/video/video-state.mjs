@@ -101,9 +101,10 @@ export const projectDuration = project => allClips(project)
 export function compositePlan(project) {
   const soloed = project.tracks.some(track => track.solo);
   const active = project.tracks.filter(track => !track.mute && (!soloed || track.solo));
+  // 视频轨 mute 只静声音、不撤画面：否则静音唯一那条视频轨会让整片没有画面可导出。
   return {
     duration: projectDuration(project),
-    video: active.filter(track => track.kind === 'video').map((track, index) => ({ trackId: track.id, order: index, volume: track.volume, clips: track.clips.map(clip => ({ ...clip, trackId: track.id })) })),
+    video: project.tracks.filter(track => track.kind === 'video').map((track, index) => ({ trackId: track.id, order: index, volume: track.mute ? 0 : track.volume, clips: track.clips.map(clip => ({ ...clip, trackId: track.id })) })),
     audio: active.filter(track => track.kind === 'audio').map(track => ({ trackId: track.id, volume: track.volume, clips: track.clips.map(clip => ({ ...clip, trackId: track.id })) })),
     // 字幕轨是独立轨道：按轨道顺序参与合成，不是叠加对象。
     text: active.filter(track => track.kind === 'text').map(track => ({ trackId: track.id, order: track.order, clips: track.clips.map(clip => ({ ...clip, trackId: track.id })) })),
@@ -287,8 +288,8 @@ export function readState(project, history, instanceId, capabilities = {}) {
       effective: {
         audible: project.tracks.some(item => item.solo) ? track.solo && track.kind !== 'text' : (!track.mute && track.kind !== 'text'),
         visible: project.tracks.some(item => item.solo) ? track.solo : !track.mute,
-        // 视频轨也有音量：它的音轨同样受 track.update volume 控制，不能再报 null。
-        gain: track.kind === 'text' ? null : track.volume,
+        // 视频轨也有音量：受 track.update volume 控制；静音后实际增益是 0（画面仍在）。
+        gain: track.kind === 'text' ? null : (track.mute ? 0 : track.volume),
       },
     })),
     trackClips: project.tracks.map(track => ({ trackId: track.id, clips: clone(track.clips) })),
