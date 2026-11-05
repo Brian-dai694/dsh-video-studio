@@ -3,20 +3,20 @@ import assert from 'node:assert/strict';
 import { createEditorRelay, createRelayHttpHandler } from '../lib/relay.js';
 
 test('Host getPage returns immutable live routing without credentials or claimed session', () => {
-  const relay = createEditorRelay({ editorKind: 'image' });
+  const relay = createEditorRelay({ editorKind: 'video' });
   try {
     assert.equal(relay.getPage('missing'), null);
-    const registration = relay.register({ editorInstanceId: 'image-instance' });
-    const page = relay.getPage('image-instance');
+    const registration = relay.register({ editorInstanceId: 'video-instance' });
+    const page = relay.getPage('video-instance');
     assert.equal(page.pageId, registration.pageId);
-    assert.equal(page.editorInstanceId, 'image-instance');
-    assert.equal(page.kind, 'image');
+    assert.equal(page.editorInstanceId, 'video-instance');
+    assert.equal(page.kind, 'video');
     assert.equal(Object.isFrozen(page), true);
     assert.equal('pageToken' in page, false);
     assert.equal('token' in page, false);
     assert.equal('sessionId' in page, false);
     relay.disconnect(registration);
-    assert.equal(relay.getPage('image-instance'), null);
+    assert.equal(relay.getPage('video-instance'), null);
   } finally { relay.close(); }
 });
 

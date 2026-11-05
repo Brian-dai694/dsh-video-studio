@@ -1,9 +1,11 @@
-// The video package is video-only: its tools, schemas and guard must not accept
-// image operations, and every registered tool belongs to this editor family.
+// The video package is video-only: its tools, schemas, adapter and relay must not
+// accept image operations or kind, and every registered tool belongs to this editor family.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { apply } from '../lib/index.js';
 import { TOOL_KINDS } from '../lib/gate.js';
+import { createMediaBridge } from '../lib/bridge.js';
+import { createEditorRelay } from '../lib/relay.js';
 
 function makeContext() {
   const tools = new Map();
@@ -40,4 +42,19 @@ test('the guard accepts only video operations and still denies image ones', () =
   for (const operation of ['media.video.clip.add', 'media.video.clip.trim', 'media.video.clip.move', 'media.video.clip.remove', 'media.video.overlay.add', 'media.video.overlay.update', 'media.video.history.undo', 'media.video.history.redo']) assert.equal(check(operation), undefined, operation);
   for (const operation of ['layer.add_text', 'canvas.crop', 'history.undo', 'media.video', 'clip.add']) assert.match(check(operation), /media\.video\.\*/, operation);
   assert.match(guard({ name: 'media_video_apply_command', arguments: { editorKind: 'image', operation: 'layer.add_text' } }), /targets the video editor/);
+});
+
+test('the relay defaults to the video kind and still refuses the image kind', () => {
+  const relay = createEditorRelay();
+  const page = relay.register({ editorInstanceId: 'default-kind' });
+  assert.equal(page.kind, 'video');
+  assert.equal(relay.getPage('default-kind').kind, 'video');
+  relay.close();
+  assert.throws(() => createEditorRelay({ editorKind: 'image' }), { name: 'TypeError' });
+});
+
+test('the bridge defaults to the video kind and still refuses the image kind', () => {
+  const bridge = createMediaBridge({ relay: { request: async () => ({}) } });
+  assert.equal(bridge.editorKind, 'video');
+  assert.throws(() => createMediaBridge({ relay: { request: async () => ({}) }, editorKind: 'image' }), { name: 'TypeError' });
 });

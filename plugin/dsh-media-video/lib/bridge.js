@@ -1,4 +1,4 @@
-// Editor adapter shared by the image and video plugins.
+// Editor adapter for the video editor.
 // Owns validation, idempotency, expectedRevision and unknown-outcome semantics.
 // It never stores document state: the editor page is the only state owner.
 
@@ -90,16 +90,6 @@ function validateVideoCommand(command) {
 
 export const COMMAND_VALIDATORS = { video: validateVideoCommand };
 
-function validateImageState(state, instanceId) {
-  if (!isObject(state) || state.editorKind !== 'image' || state.editorInstanceId !== instanceId ||
-      typeof state.documentId !== 'string' || !Number.isSafeInteger(state.revision) || state.revision < 0 ||
-      !isObject(state.canvas) || !Number.isFinite(state.canvas.width) || !Number.isFinite(state.canvas.height) ||
-      !Array.isArray(state.layers)) {
-    throw new MediaBridgeError('EDITOR_ERROR', 'Image editor returned an invalid state.');
-  }
-  return state;
-}
-
 function validateVideoState(state, instanceId) {
   if (!isObject(state) || state.editorKind !== 'video' || state.editorInstanceId !== instanceId ||
       typeof state.documentId !== 'string' || !Number.isSafeInteger(state.revision) || state.revision < 0 ||
@@ -111,11 +101,11 @@ function validateVideoState(state, instanceId) {
   return state;
 }
 
-export const STATE_VALIDATORS = { image: validateImageState, video: validateVideoState };
+export const STATE_VALIDATORS = { video: validateVideoState };
 
-export function createMediaBridge({ relay, editorKind, timeoutMs = DEFAULT_TIMEOUT_MS }) {
+export function createMediaBridge({ relay, editorKind = 'video', timeoutMs = DEFAULT_TIMEOUT_MS }) {
   if (!relay || typeof relay.request !== 'function') throw new TypeError('relay.request is required');
-  if (!STATE_VALIDATORS[editorKind]) throw new TypeError('editorKind must be image or video');
+  if (editorKind !== 'video') throw new TypeError('editorKind must be "video"');
   const completed = new Map();
   const inFlight = new Map();
   const uncertain = new Map();
@@ -171,7 +161,7 @@ export function createMediaBridge({ relay, editorKind, timeoutMs = DEFAULT_TIMEO
       opaqueId(input?.instanceId, 'instanceId');
       opaqueId(input.projectId, 'projectId');
       opaqueId(input.commandId, 'commandId');
-      const formats = editorKind === 'image' ? ['png', 'jpeg'] : ['webm', 'mp4'];
+      const formats = ['webm', 'mp4'];
       if (!formats.includes(input.format)) throw new MediaBridgeError('INVALID_REQUEST', `Export format for ${editorKind} must be one of ${formats.join(', ')}.`);
       const key = keyOf(input.instanceId, input.commandId);
       if (completed.has(key)) return completed.get(key);

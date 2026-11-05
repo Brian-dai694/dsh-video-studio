@@ -7,10 +7,10 @@ const opaque = (value) => typeof value === 'string' && value.length > 0 && value
 // Stores routing and request outcomes only; never owns or writes editor document state.
 export function createEditorRelay({ timeoutMs = 10000, leaseMs = 15000, maxPending = 128, maxPages = 8,
   minPollIntervalMs = 50, maxMessageBytes = 65536, maxResponseBytes = 262144, allowedTypes = DEFAULT_TYPES,
-  editorKind = 'image' } = {}) {
+  editorKind = 'video' } = {}) {
   const types = new Set(allowedTypes);
-  if (!['image', 'video'].includes(editorKind) || !types.has('editor.read_state') || !types.has('editor.apply_command') || !types.has('editor.get_command_result')) {
-    throw new TypeError('Relay requires a supported editorKind and the three core editor request types');
+  if (editorKind !== 'video' || !types.has('editor.read_state') || !types.has('editor.apply_command') || !types.has('editor.get_command_result')) {
+    throw new TypeError('Relay is bound to the video editor and requires the three core editor request types');
   }
   const pages = new Map();
   const pending = new Map();
