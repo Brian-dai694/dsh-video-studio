@@ -117,13 +117,8 @@ function buildAudioGraph(plan, elements, audioContext) {
     if (!element) return;
     // 视频片段自带音轨时也走同一条主总线（音量 1.0），与音频轨一起线性相加。
     // single-track project sounding exactly like before multi-track support.
-    try {
-      const probe = element.captureStream?.();
-      if (probe) {
-        if (probe.getAudioTracks().length) hasAudio = true;
-        probe.getTracks().forEach(track => track.stop());
-      }
-    } catch { /* captureStream unsupported */ }
+    // 不做 captureStream 探测：同一元素先被 captureStream 抓过再 createMediaElementSource，
+    // Chromium 里会让它的音轨时有时无。hasAudio 改为录制结束后按解码字节数判定。
     const gain = audioContext.createGain();
     // 线性倍数，0..2；不按输入数除、不做归一化。
     gain.gain.value = Math.max(0, Math.min(2, volume ?? 1));
@@ -144,7 +139,7 @@ function buildAudioGraph(plan, elements, audioContext) {
   };
   for (const track of plan.video) for (const clip of track.clips) attach(elements.get(clip.sourceRef), 1);
   for (const track of plan.audio) for (const clip of track.clips) attach(elements.get(clip.sourceRef), track.volume ?? 1);
-  return { destination, sources, hasAudio: hasAudio || plan.audio.length > 0, samplePeak, peakDb: () => peakToDb(peak) };
+  return { destination, sources, hasAudio: plan.audio.length > 0, samplePeak, peakDb: () => peakToDb(peak) };
 }
 
 // 峰值 PCM 换算：1.0 = 0 dBFS。混音只回报峰值，不做压缩、不自动降音量。
@@ -256,7 +251,8 @@ export async function recordComposition({ project, elements, mimeType, onProgres
       videoTracks: plan.video.length,
       audioTracks: plan.audio.length,
       audioSources: audioGraph.sources,
-      hasAudio: audioGraph.hasAudio,
+      // 视频片段自带音轨：播放结束后按浏览器已经解码的音频字节数判定，避免误报“无音频”。
+      hasAudio: audioGraph.hasAudio || [...elements.values()].some(element => (element.webkitAudioDecodedByteCount ?? 0) > 0),
       // 峰值只回报，不修改音频；peakDb > 0 时 warning 是中文告警，由调用方展示。
       peakDb: Number(audioGraph.peakDb().toFixed(2)) === -Infinity ? null : Number(audioGraph.peakDb().toFixed(2)),
       warning: clipWarning(audioGraph.peakDb()),
