@@ -6,6 +6,11 @@ import { apply } from '../lib/index.js';
 import { TOOL_KINDS } from '../lib/gate.js';
 import { createMediaBridge } from '../lib/bridge.js';
 import { createEditorRelay } from '../lib/relay.js';
+import { registerMediaTools } from '../lib/tools.js';
+import { createApprovalStore } from '../lib/gate.js';
+import { fixtureBindings } from './host-fixture.mjs';
+
+const exec = { agent: { id: 's1', session: { id: 's1' } } };
 
 function makeContext() {
   const tools = new Map();
@@ -57,4 +62,24 @@ test('the bridge defaults to the video kind and still refuses the image kind', (
   const bridge = createMediaBridge({ relay: { request: async () => ({}) } });
   assert.equal(bridge.editorKind, 'video');
   assert.throws(() => createMediaBridge({ relay: { request: async () => ({}) }, editorKind: 'image' }), { name: 'TypeError' });
+});
+
+test('export renders carry the exportId/artifactRef the model needs; writes stay compact', async () => {
+  const tools = new Map();
+  const bridge = {
+    editorKind: 'video',
+    readState: async () => ({ editorKind: 'video', editorInstanceId: 'i1', documentId: 'p1', revision: 2, stateDigest: 'd2', timeline: { duration: 1, fps: 30, currentTime: 0 }, tracks: [], clips: [], overlays: [], capabilities: {} }),
+    applyCommand: async input => ({ editorKind: 'video', documentId: 'p1', commandId: input.commandId, revision: 3, changedObjectIds: [], stateDigest: 'd3' }),
+    startExport: async input => ({ editorKind: 'video', commandId: input.commandId, exportId: 'exp-1', status: 'ready', artifactRef: 'artifact://exp-1' }),
+    getExportStatus: async () => ({ editorKind: 'video', exportId: 'exp-1', status: 'ready', artifactRef: 'artifact://exp-1' }),
+  };
+  registerMediaTools({ tools: { register: definition => tools.set(definition.name, definition), guard: () => {} } }, { bridge, approvals: createApprovalStore(), bindings: fixtureBindings });
+  const render = (name, args, value) => tools.get(name).output.render(args, value).map(block => block.text).join('\n');
+  const startArgs = { editorKind: 'video', projectId: 'p1', instanceId: 'i1', commandId: 'e-1', expectedRevision: 2, format: 'webm' };
+  assert.match(render('media_video_export_start', startArgs, await tools.get('media_video_export_start').execute(startArgs, exec)), /exportId exp-1/);
+  const statusArgs = { editorKind: 'video', projectId: 'p1', instanceId: 'i1', exportId: 'exp-1' };
+  assert.match(render('media_video_export_status', statusArgs, await tools.get('media_video_export_status').execute(statusArgs, exec)), /artifactRef artifact:\/\/exp-1/);
+  const applyArgs = { editorKind: 'video', projectId: 'p1', instanceId: 'i1', commandId: 'c-plain', expectedRevision: 2, operation: 'media.video.clip.move', params: {} };
+  const applyText = render('media_video_apply_command', applyArgs, await tools.get('media_video_apply_command').execute(applyArgs, exec));
+  assert.doesNotMatch(applyText, /exportId|artifactRef/);
 });
