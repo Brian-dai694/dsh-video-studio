@@ -467,8 +467,15 @@ const chat = mountChat({
   ],
 });
 
-// 渲染自检钩子：仅 ?debug 时暴露，用于在没有真实命令凭据时验证"计划字段真的进 DOM"。
-if (new URLSearchParams(location.search).has('debug')) globalThis.__dshChat = chat;
+// 渲染自检钩子：只在 loopback + ?debug 时暴露，且只读（可查看、可渲染计划），
+// 没有任何发送、命令派发或审批入口——它不能变成一条绕过审计的通道。
+const __loopback = ['127.0.0.1', 'localhost', '::1', '[::1]'].includes(location.hostname);
+if (__loopback && new URLSearchParams(location.search).has('debug')) {
+  globalThis.__dshChatDebug = Object.freeze({
+    messages: () => chat.messages,
+    render: rows => chat.appendRows(rows),
+  });
+}
 
 // 「在编辑器中另存为文件」：导出作业完成才有 artifactRef；没完成就明说，不做假按钮。
 function downloadExport(exportRef = {}) {
