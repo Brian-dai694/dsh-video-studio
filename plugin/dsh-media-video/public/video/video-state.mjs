@@ -25,6 +25,20 @@ export function createProject() {
 
 // Old single-track projects stored clips on a `kind:'overlay'` companion track and had no
 // per-track properties. Normalise both shapes so an existing project still opens.
+// 同一素材不允许被两条轨道同时发声：一个媒体元素只能接一条音频链，重复引用会让
+// 音量语义变得不可预测（改一轨却影响两处声音），所以写入时就拒绝。
+function assertUniqueAudioSource(project, sourceRef, trackId) {
+  if (!sourceRef) return;
+  for (const track of project.tracks) {
+    if (track.id === trackId || track.mute || track.kind === 'text') continue;
+    if (track.clips.some(clip => clip.sourceRef === sourceRef)) {
+      const error = new Error('DUPLICATE_AUDIO_SOURCE: 同一素材已在另一条轨道上发声，请先静音该轨或删掉那处引用');
+      error.code = 'DUPLICATE_AUDIO_SOURCE';
+      throw error;
+    }
+  }
+}
+
 // 同轨时间重叠一律拒绝：空隙是合法状态，重叠不是。轨道顺序即层级，不做隐式吸收。
 function assertNoOverlap(track, start, end, excludeId) {
   const from = round(start), to = round(end);
@@ -133,6 +147,7 @@ export function reduceProject(project, command) {
       const input = Math.max(0, Math.min(clip.in ?? 0, clip.duration - 0.05));
       const output = Math.max(input + 0.05, Math.min(clip.out ?? clip.duration, clip.duration));
       assertNoOverlap(track, start, start + output - input);
+      assertUniqueAudioSource(next, clip.sourceRef, track.id);
       track.clips.push({ id: clip.id || nextId(), sourceRef: clip.sourceRef, name: clip.name, duration: clip.duration, in: input, out: output, start, trackId: track.id });
       if (track.kind === 'video' && !next.source) next.source = { sourceRef: clip.sourceRef, name: clip.name };
       next.selection = track.clips.at(-1).id;
@@ -166,6 +181,7 @@ export function reduceProject(project, command) {
         if (!targetTrack) throw new Error('目标轨道不存在');
         const target = Math.max(0, command.start);
         assertNoOverlap(targetTrack, target, target + length, found.clip.id);
+        if (targetTrack.id !== found.track.id) assertUniqueAudioSource(next, found.clip.sourceRef, targetTrack.id);
         found.clip.start = target;
       }
       if (command.trackId && command.trackId !== found.track.id) {
@@ -271,7 +287,8 @@ export function readState(project, history, instanceId, capabilities = {}) {
       effective: {
         audible: project.tracks.some(item => item.solo) ? track.solo && track.kind !== 'text' : (!track.mute && track.kind !== 'text'),
         visible: project.tracks.some(item => item.solo) ? track.solo : !track.mute,
-        gain: track.kind === 'audio' ? track.volume : null,
+        // 视频轨也有音量：它的音轨同样受 track.update volume 控制，不能再报 null。
+        gain: track.kind === 'text' ? null : track.volume,
       },
     })),
     trackClips: project.tracks.map(track => ({ trackId: track.id, clips: clone(track.clips) })),

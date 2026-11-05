@@ -38,3 +38,15 @@
 .track-row.text .track-kind { color: #7a5af8; }
 .track-row.text .track-lane { background: rgba(122, 90, 248, .06); }
 .track-clip.text { background: rgba(122, 90, 248, .18); border-color: rgba(122, 90, 248, .45); color: #4b32c3; }
+
+/* 导出入口必须可点击：顶栏是独立层叠上下文，下拉菜单要盖在工作区（含 .stage）之上，
+   否则 elementFromPoint 命中的是画布，真实鼠标点不到“导出 WebM”。 */
+.topbar { position: relative; z-index: 30; }
+.io-options { z-index: 40; }
+.stage { position: relative; z-index: 0; }
+
+/* 极简模式的导出入口：顶栏常驻按钮，普通文档流元素（可聚焦、可被真实鼠标命中），
+   不再藏在下拉面板里，避免被画布层抢走命中测试。 */
+.export-quick { display: none; }
+.minimal-editor .export-quick { display: inline-flex; align-items: center; flex: 0 0 auto; white-space: nowrap; }
+.minimal-editor .topbar { flex-wrap: wrap; row-gap: 6px; height: auto; min-height: 58px; }

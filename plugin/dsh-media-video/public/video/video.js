@@ -382,6 +382,7 @@ $('overlayText').addEventListener('keydown', event => {
 });
 $('overlayList').onclick = event => { const id = event.target.dataset.removeOverlay; if (id) apply({ type: 'media.video.overlay.remove', overlayId: id }); };
 $('saveProject').onclick = saveSnapshot; $('openProject').onclick = () => $('projectInput').click(); $('projectInput').addEventListener('change', event => { openSnapshot(event.currentTarget.files?.[0]); event.currentTarget.value = ''; }); $('exportVideo').onclick = exportWebm;
+$('exportQuick').onclick = exportWebm;
 $('parseIntent').onclick = () => { try { if (!clip()) throw new Error('先导入视频再生成编辑意图'); showIntent(makeIntent($('intentInput').value)); } catch (error) { toast(error.message); } };
 document.querySelectorAll('.mode-option').forEach(button => button.onclick = () => { mode = button.dataset.mode; document.querySelectorAll('.mode-option').forEach(item => item.classList.toggle('active', item === button)); $('modeNote').textContent = mode === 'assist' ? '每次写入先预览并由你确认。' : '仅已授权低风险命令可自动执行；高风险仍需人工确认。自主授权仅为本地模拟。'; });
 $('grantCapability').onclick = () => { autonomousCapabilities.add('media.video.overlay.add'); toast('已授予本地模拟 capability：media.video.overlay.add'); };

@@ -137,9 +137,18 @@ function buildAudioGraph(plan, elements, audioContext) {
       sources += 1;
     }
   };
-  for (const track of plan.video) for (const clip of track.clips) attach(elements.get(clip.sourceRef), 1);
-  for (const track of plan.audio) for (const clip of track.clips) attach(elements.get(clip.sourceRef), track.volume ?? 1);
-  return { destination, sources, hasAudio: plan.audio.length > 0, samplePeak, peakDb: () => peakToDb(peak) };
+  // 视频轨也按自身 volume 接入；同一素材只允许一条音频链，重复引用直接拒绝。
+  const seenAudioRefs = new Set();
+  const attachOnce = (ref, volume) => {
+    if (ref && seenAudioRefs.has(ref)) {
+      throw Object.assign(new Error('DUPLICATE_AUDIO_SOURCE: 同一素材在两条轨道上同时发声，请先静音其中一轨或删掉一处引用'), { code: 'DUPLICATE_AUDIO_SOURCE' });
+    }
+    if (ref) seenAudioRefs.add(ref);
+    attach(elements.get(ref), volume ?? 1);
+  };
+  for (const track of plan.video) for (const clip of track.clips) attachOnce(clip.sourceRef, track.volume ?? 1);
+  for (const track of plan.audio) for (const clip of track.clips) attachOnce(clip.sourceRef, track.volume ?? 1);
+  return { destination, sources, hasAudio: plan.audio.length > 0, samplePeak, peakValue: () => peak, peakDb: () => peakToDb(peak) };
 }
 
 // 峰值 PCM 换算：1.0 = 0 dBFS。混音只回报峰值，不做压缩、不自动降音量。
@@ -253,8 +262,9 @@ export async function recordComposition({ project, elements, mimeType, onProgres
       audioSources: audioGraph.sources,
       // 视频片段自带音轨：播放结束后按浏览器已经解码的音频字节数判定，避免误报“无音频”。
       hasAudio: audioGraph.hasAudio || [...elements.values()].some(element => (element.webkitAudioDecodedByteCount ?? 0) > 0),
-      // 峰值只回报，不修改音频；peakDb > 0 时 warning 是中文告警，由调用方展示。
-      peakDb: Number(audioGraph.peakDb().toFixed(2)) === -Infinity ? null : Number(audioGraph.peakDb().toFixed(2)),
+      // 峰值只回报，不修改音频；判定只认 peakDb（dBFS），peak 是线性倍数，方便对契约原文。
+      peak: Number(audioGraph.peakValue().toFixed(4)),
+      peakDb: Number.isFinite(audioGraph.peakDb()) ? Number(audioGraph.peakDb().toFixed(2)) : null,
       warning: clipWarning(audioGraph.peakDb()),
     };
   } finally {
