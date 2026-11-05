@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { createProject, createTrack, reduceProject, readState } from '../public/video/video-state.mjs';
+import { createProject, createTrack, compositePlan, reduceProject, readState } from '../public/video/video-state.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const exportSource = readFileSync(join(here, '../public/video/video-export.mjs'), 'utf8');
@@ -65,4 +65,14 @@ test('状态层给了重复音频源的检查函数，并在 add/move 两条路�
   assert.match(stateSource, /function assertUniqueAudioSource/);
   const calls = (stateSource.match(/assertUniqueAudioSource\(next,/g) || []).length;
   assert.equal(calls, 2, 'clip.add 与 clip.move 都要查');
+});
+
+test('compositePlan 的 video 分支必须带出 volume（否则导出端拿不到轨道音量）', () => {
+  const base = createProject();
+  const video = Object.assign(createTrack('video', 0), { id: 'v-plan' });
+  const project = { ...base, tracks: [video] };
+  const plan = compositePlan(project);
+  assert.equal(plan.video.length, 1);
+  assert.equal(plan.video[0].volume, 1, '默认音量要出现在计划里');
+  assert.equal(compositePlan({ ...project, tracks: [{ ...video, volume: 0.5 }] }).video[0].volume, 0.5);
 });

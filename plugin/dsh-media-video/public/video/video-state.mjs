@@ -103,7 +103,7 @@ export function compositePlan(project) {
   const active = project.tracks.filter(track => !track.mute && (!soloed || track.solo));
   return {
     duration: projectDuration(project),
-    video: active.filter(track => track.kind === 'video').map((track, index) => ({ trackId: track.id, order: index, clips: track.clips.map(clip => ({ ...clip, trackId: track.id })) })),
+    video: active.filter(track => track.kind === 'video').map((track, index) => ({ trackId: track.id, order: index, volume: track.volume, clips: track.clips.map(clip => ({ ...clip, trackId: track.id })) })),
     audio: active.filter(track => track.kind === 'audio').map(track => ({ trackId: track.id, volume: track.volume, clips: track.clips.map(clip => ({ ...clip, trackId: track.id })) })),
     // 字幕轨是独立轨道：按轨道顺序参与合成，不是叠加对象。
     text: active.filter(track => track.kind === 'text').map(track => ({ trackId: track.id, order: track.order, clips: track.clips.map(clip => ({ ...clip, trackId: track.id })) })),
