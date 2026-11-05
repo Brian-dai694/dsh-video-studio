@@ -1,0 +1,14 @@
+{
+  "editorKind": "video",
+  "contractVersion": 1,
+  "namespace": "media.video.*",
+  "identity": ["projectId", "instanceId", "pageId", "revision"],
+  "envelope": {
+    "read_state": { "request": ["requestId", "instanceId"], "response": ["projectId", "instanceId", "revision", "stateDigest", "timeline", "tracks", "clips", "overlays", "history", "capabilities"] },
+    "apply_command": { "request": ["requestId", "instanceId", "projectId", "expectedRevision", "commandId", "command"], "response": ["projectId", "revision", "commandId", "changedIds"] },
+    "get_command_result": { "request": ["requestId", "instanceId", "commandId"], "response": ["status", "originalResult"] }
+  },
+  "commands": ["media.video.clip.add", "media.video.clip.trim", "media.video.clip.move", "media.video.clip.remove", "media.video.overlay.add", "media.video.overlay.update", "media.video.overlay.remove", "media.video.export.start", "media.video.export.status"],
+  "limits": { "singleVideoTrack": true, "maxClips": 1, "mediaBytesInRelay": false, "exportResult": "artifactRef only; bounded metadata" },
+  "unknown": ["mp4", "persistentMediaStorage", "crossBrowserEncoding", "realDshRegistration"]
+}
