@@ -3,18 +3,23 @@
 > 依据本机已安装运行时的类型定义（源码位置逐条给出）。**找不到明确出处的字段一律标 UNKNOWN，不编。**
 > 基路径：`C:\Users\UEFR\AppData\Roaming\npm\node_modules\@deepseek-ai\dsh\node_modules\@deepseek-ai\`
 
-## 0. 一条重要区分：事件 ≠ 工具输出
+## 0. 一条重要区分：事件 ≠ 工具输出（已按抓包修正）
 
-面板要把“工具调用/结果”渲染成卡片，需要同时读两层：
+> **修正（2026-11-05，依据 FDE 抓包原文）**：本节此前写成“状态在 `message.content` 的文本 JSON 里”，**这是错的**。
+> 真实回执里 `message.content[0].text` 只有一行人类可读文本（例：`applied · fde-acceptance-addtext-001 · R1`），
+> **状态在 `data.meta.status`**（四态），凭据也在 `meta` 里（后端 0.2.1 起补：`commandId/appliedRevision/afterDigest/exportId/artifactRef/format/errorCode`）。
 
-1. **会话事件**（`SessionEvent`）：`type` + 载荷。下面 §1/§2 给的是**载荷**的形状。
-2. **工具自己的输出对象**：`status` / `commandId` / `revision` / `afterDigest` / `exportId` / `artifactRef`
-   这些字段**不在会话事件载荷里**，它们在工具结果消息的 `content` 里（模型可见文本，通常是 JSON 字符串），
-   形状由工具自己的 output schema 定义。本项目图片/视频工具的输出 schema 见
-   `dsh-image-studio/plugin/dsh-media-image/lib/tools.js:19-31`
-   （`status` 四态 `applied|rejected|pending|unknown`、`commandId`、`revision`、`afterDigest`、`exportId`、`artifactRef`）。
+顶层的真实形状（抓包原文）：
 
-> 这解释了真机上“回执外面还包一层”的现象：`tool/result` 载荷 → `message.content[]` → 文本 JSON → 工具输出字段。
+```json
+{ "type": "...", "seq": 28, "time": "...", "data": { "turn": ..., "step": ..., "message": {...}, "meta": {...} }, "sourceEventSeqs": [...], "surfaceOp": ... }
+```
+
+- **没有 `{ok, value}` 外层**（此前标 UNKNOWN 的第 2 条，现据抓包确认：不存在）。
+- `message.isError` **不能当失败判据**：抓包里那条 `REVISION_CONFLICT` 的 `isError` 是 `false`，而 `meta.status` 是 `rejected`。
+  判定顺序：`meta.status` → `meta.errorCode` → `isError` 兜底。
+
+面板要读两层：会话事件载荷（§1/§2）与 `data.meta`。`message.content` 只用于人类可读展示。
 
 ## 1. `tool/call`（`dsh-session/lib/types/types.d.ts:354`）
 
@@ -56,10 +61,10 @@ interface ToolResultMessage extends MessageBase {
 }
 ```
 
-- **失败判定**：`message.isError === true`；错误码在 **`error.code`**（可选），人类可读原因 `error.reason`（可选）。
-- **没有 `status` 字段**：四态 `applied/rejected/unknown` 只能从**工具输出**（§0 第 2 层）里取；
-  `pending` 表示“有 `tool/call` 但还没有配对的 `tool/result`”。
-- `revision` / `commandId` / `afterDigest` / `exportId` / `artifactRef`：**同样在工具输出里**，事件载荷中没有。
+- **失败判定**：**先看 `data.meta.status`**（`rejected` 即“未执行”），再看 `data.meta.errorCode`（如 `REVISION_CONFLICT`）；
+  `message.isError` 只作兜底——抓包证实 rejected 那条的 `isError` 是 `false`。
+- **没有顶层 `status` 字段**：四态在 `data.meta.status`；`pending` 表示“有 `tool/call` 但还没有配对的 `tool/result`”。
+- `revision` / `commandId` / `afterDigest` / `exportId` / `artifactRef` / `format`：在 **`data.meta`**（后端 0.2.1 起补），不在 `message.content` 文本里。
 
 ## 3. `approval/asked`（`dsh-user-approval/lib/types/types.d.ts:37`）
 
@@ -88,7 +93,7 @@ interface ToolResultMessage extends MessageBase {
 
 - **会话事件的外层信封**（`seq` / `time` / `type` 等包装字段）的确切定义：本机类型里只有 `SessionEventMap` 的载荷（`types.d.ts:255` 起），
   信封类型没在这几份 `.d.ts` 里定位到 —— **标 UNKNOWN**，以 FDE 抓的原文为准。
-- 第三方客户端订阅 `remote.session.follow` 时，帧对象外面是否再包 `{ok, value}`：**UNKNOWN**（FDE 观察到包了一层，但没在类型定义里找到对应声明）。
+- 第三方客户端订阅 `remote.session.follow` 时，帧对象外面是否再包 `{ok, value}`：**已确认不存在**（抓包顶层为 `{type, seq, time, data, sourceEventSeqs, surfaceOp}`）。
 - `approval/asked` 的“作用域/对象”（例如它针对哪个文档或工程）：**UNKNOWN**，事件里只有 `toolName` / `callId` / `reason`。
 
 ## 6. 对面板解析的直接建议

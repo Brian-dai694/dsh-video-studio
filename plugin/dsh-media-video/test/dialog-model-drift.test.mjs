@@ -17,10 +17,10 @@ test('vendor 的 dialog-model.mjs 与声明的 sha256/字节数完全一致', as
   assert.equal(bytes.length, meta.bytes);
 });
 
-test('版本号与共享模块一致（dialog-model@3）', async () => {
+test('版本号与共享模块一致（dialog-model@4）', async () => {
   const meta = JSON.parse(await readFile(metaUrl, 'utf8'));
   assert.equal(DIALOG_MODEL_VERSION, meta.version);
-  assert.equal(DIALOG_MODEL_VERSION, 'dialog-model@3');
+  assert.equal(DIALOG_MODEL_VERSION, 'dialog-model@4');
 });
 
 test('fill-undo：凭据进计划、动作自带整句 prompt，非法凭据整个动作不出现', () => {

@@ -1,8 +1,8 @@
 {
   "source": "dsh-image-studio/shared/dialog-model.mjs",
-  "sourceCommit": "9937208",
-  "sha256": "46dd2a92471f1b97c3d6720bab35225df817a5f7d10b89c365d532e84a097e47",
-  "bytes": 13610,
-  "version": "dialog-model@3",
+  "sourceCommit": "673f5b3",
+  "sha256": "6409b4d67ac79575236e8f58d60630254cf40086cb1bde689efeff485aa243d2",
+  "bytes": 13785,
+  "version": "dialog-model@4",
   "rule": "整份复制，不逐段改；升级时整份替换并更新这里与测试里的 sha256。升级要同时拿到版本号、字节数、sha256 三个值。"
 }
