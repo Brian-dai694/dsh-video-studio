@@ -11,6 +11,7 @@
     <a class="brand" href="#">帧间 <span>VIDEO STUDIO</span></a>
     <div class="project-name"><strong id="projectName">未命名工程</strong><small id="revisionLabel">修订 0 · 未保存</small></div>
     <div class="top-actions">
+    <button type="button" id="exportQuick" class="export-btn export-quick">导出 WebM</button>
       <details class="io-menu"><summary>导入</summary><div class="io-options"><label class="icon-btn">视频文件<input id="videoInput" type="file" accept="video/*" hidden></label><button class="icon-btn" id="openProject">打开工程</button><label class="icon-btn">叠加图片<input id="overlayImageInput" type="file" accept="image/*" hidden></label></div></details>
       <input id="projectInput" type="file" accept="application/json,.json" hidden>
       <details class="io-menu"><summary>导出</summary><div class="io-options"><button class="icon-btn" id="saveProject">保存工程</button><button class="export-btn" id="exportVideo" disabled>导出 WebM</button><span class="unavailable">MP4 未验证</span></div></details>
@@ -33,7 +34,7 @@
         <button id="overlayAdd" class="export-btn" aria-label="添加文字叠加">添加</button>
       </div>
       <input id="scrubber" type="range" min="0" max="1000" value="0" aria-label="播放进度">
-      <div class="timeline-head"><div class="timeline-title">时间轴 <span id="durationLabel">00:00</span></div><div class="timeline-tools"><button id="addVideoTrack" class="text-btn">＋ 视频轨</button><button id="addAudioTrack" class="text-btn">＋ 音频轨</button><button id="removeClip" class="text-btn" disabled>删除片段</button><span class="divider"></span><button id="zoomOut" class="tool-btn">−</button><button id="zoomIn" class="tool-btn">＋</button></div></div>
+      <div class="timeline-head"><div class="timeline-title">时间轴 <span id="durationLabel">00:00</span></div><div class="timeline-tools"><button id="addVideoTrack" class="text-btn">＋ 视频轨</button><button id="addAudioTrack" class="text-btn">＋ 音频轨</button><button id="addTextTrack" class="text-btn">＋ 字幕轨</button><button id="removeClip" class="text-btn" disabled>删除片段</button><span class="divider"></span><button id="zoomOut" class="tool-btn">−</button><button id="zoomIn" class="tool-btn">＋</button></div></div>
       <div class="timeline" id="timeline">
         <div class="ruler" id="ruler"></div>
         <div class="track-list" id="trackList"></div>

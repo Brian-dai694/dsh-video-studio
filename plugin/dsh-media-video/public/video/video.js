@@ -60,16 +60,17 @@ function renderTracks() {
       const left = (item.start / duration) * 100;
       const width = Math.max(2, ((item.out - item.in) / duration) * 100);
       const selected = state.selection === item.id ? ' selected' : '';
-      const label = `${item.name} · ${format(item.in)}–${format(item.out)}`;
-      return `<button type="button" class="track-clip ${track.kind}${selected}" data-clip="${item.id}" data-track="${track.id}" style="left:${left}%;width:${width}%" title="${escapeHtml(label)}">${escapeHtml(item.name || '片段')}</button>`;
+      const clipName = item.name || (item.text ? item.text.slice(0, 12) : '片段');
+      const label = `${clipName} · ${format(item.in)}–${format(item.out)}`;
+      return `<button type="button" class="track-clip ${track.kind}${selected}" data-clip="${item.id}" data-track="${track.id}" style="left:${left}%;width:${width}%" title="${escapeHtml(label)}">${escapeHtml(clipName)}</button>`;
     }).join('');
     return `<div class="track-row ${track.kind}${track.id === selectedTrackId ? ' active' : ''}" data-track-row="${track.id}">
       <div class="track-head">
-        <span class="track-kind">${track.kind === 'video' ? '视频' : '音频'}</span>
+        <span class="track-kind">${track.kind === 'video' ? '视频' : track.kind === 'audio' ? '音频' : '字幕'}</span>
         <span class="track-name">${escapeHtml(track.name)}</span>
         <button type="button" class="track-toggle${track.mute ? ' on' : ''}" data-track-mute="${track.id}" aria-label="静音 ${escapeHtml(track.name)}">M</button>
         <button type="button" class="track-toggle${track.solo ? ' on' : ''}" data-track-solo="${track.id}" aria-label="独奏 ${escapeHtml(track.name)}">S</button>
-        <input class="track-volume" data-track-volume="${track.id}" type="range" min="0" max="200" value="${Math.round((track.volume ?? 1) * 100)}" aria-label="音量 ${escapeHtml(track.name)}">
+        ${track.kind === 'text' ? '' : `<input class="track-volume" data-track-volume="${track.id}" type="range" min="0" max="200" value="${Math.round((track.volume ?? 1) * 100)}" aria-label="音量 ${escapeHtml(track.name)}">`}
       </div>
       <div class="track-lane" data-track-lane="${track.id}">${clips}</div>
     </div>`;
@@ -178,6 +179,8 @@ async function importVideo(file) {
   // 多轨允许多个片段；只有内容完全相同才走重连，其余按新片段加入所选轨道。
   const matched = exact ?? legacy;
   const ref = matched ? matched.clip.sourceRef : incoming;
+  // 元素此前是否已经加载，决定“重连”还是“再放一次”。
+  const wasLoaded = !!mediaFor(ref);
   const element = mediaFor(ref) ?? attachMedia(ref, file, kind);
   let track = project().tracks.find(item => item.id === selectedTrackId && item.kind === kind) || project().tracks.find(item => item.kind === kind);
   if (!track) { apply({ type: 'media.video.track.add', track: { kind } }); track = project().tracks.find(item => item.kind === kind); }
@@ -190,14 +193,26 @@ async function importVideo(file) {
     if (generation !== importGeneration) return;
     if (!Number.isFinite(duration) || duration <= 0) { toast('媒体时长无效，无法加入时间轴'); return; }
     element.currentTime = 0;
-    if (matched) {
+    if (matched && !wasLoaded) {
       $('projectName').textContent = file.name.replace(/\.[^.]+$/, '');
       $('emptyStage').hidden = true;
       probeCapabilities();
       toast(legacy ? '媒体已重新连接（旧工程按文件名与大小匹配）' : '媒体已重新连接，工程内容保持不变');
       return;
     }
-    apply({ type: 'media.video.clip.add', clip: { id: crypto.randomUUID(), sourceRef: ref, name: file.name, duration, trackId: track.id, start: project().timeline.duration } });
+    // 写入失败（同位置已有片段等）必须把原因说给用户，不能"提示已加入、实际没加"。
+    const beforeCount = project().tracks.reduce((sum, item) => sum + item.clips.length, 0);
+    try {
+      apply({ type: 'media.video.clip.add', clip: { id: crypto.randomUUID(), sourceRef: ref, name: file.name, duration, trackId: track.id, start: project().timeline.currentTime ?? 0 } });
+    } catch (error) {
+      toast(`导入失败：${error && error.message ? error.message : '未知原因'}`);
+      return;
+    }
+    const afterCount = project().tracks.reduce((sum, item) => sum + item.clips.length, 0);
+    if (afterCount <= beforeCount) {
+      toast('导入失败：片段没有加入时间轴，请换个位置或先调整已有片段');
+      return;
+    }
     $('projectName').textContent = file.name.replace(/\.[^.]+$/, '');
     $('emptyStage').hidden = true;
     probeCapabilities();
@@ -291,11 +306,11 @@ function startExport(message) {
   const format = String(message.format || '');
   if (format !== 'webm') throw Object.assign(new Error('本轮只验证 WebM 导出；MP4 未验证，暂不可用'), { code: 'EXPORT_FORMAT_UNAVAILABLE' });
   if (!capabilities().webm) throw Object.assign(new Error('当前浏览器不支持 WebM 录制'), { code: 'EXPORT_UNAVAILABLE' });
-  if (!clip()) throw Object.assign(new Error('工程中没有可导出的视频片段'), { code: 'EXPORT_EMPTY' });
+  if (!clip()) throw Object.assign(new Error('纯音频工程暂不支持导出视频，请至少放入一个视频片段'), { code: 'EXPORT_EMPTY' });
   if (exportBusy) throw Object.assign(new Error('已有导出正在进行'), { code: 'EXPORT_BUSY' });
   // 后台标签的 rAF 会被节流，合成循环不推进就没有帧可录；在这里直接拒绝，别让用户空等。
   assertForeground();
-  const job = { exportId: `export-${crypto.randomUUID()}`, commandId: message.commandId, format, status: 'running', progress: 0, artifactRef: null, bytes: 0, durationSeconds: 0, audio: null, error: null, fileName: 'video-export.webm' };
+  const job = { exportId: `export-${crypto.randomUUID()}`, commandId: message.commandId, format, status: 'running', progress: 0, artifactRef: null, bytes: 0, durationSeconds: 0, audio: null, peakDb: null, warning: null, error: null, fileName: 'video-export.webm' };
   exportJobs.set(job.exportId, job);
   runExport(job);
   return { editorKind: 'video', commandId: message.commandId, exportId: job.exportId, status: 'running' };
@@ -306,10 +321,12 @@ async function runExport(job) {
     const elements = new Map([...media.entries()].map(([ref, entry]) => [ref, entry.element]));
     const result = await recordComposition({ project: structuredClone(project()), elements, mimeType: webmCapability.mimeType, onProgress: value => { job.progress = value; $('exportVideo').textContent = `导出 ${Math.round(value * 100)}%`; } });
     const url = URL.createObjectURL(result.blob);
-    Object.assign(job, { status: 'ready', progress: 1, artifactRef: url, bytes: result.blob.size, durationSeconds: result.durationSeconds, audio: result.hasAudio === true });
+    Object.assign(job, { status: 'ready', progress: 1, artifactRef: url, bytes: result.blob.size, durationSeconds: result.durationSeconds, audio: result.hasAudio === true, peakDb: result.peakDb ?? null, warning: result.warning ?? null });
     Object.assign(document.createElement('a'), { href: url, download: job.fileName }).click();
     setTimeout(() => URL.revokeObjectURL(url), 120000);
-    toast(`WebM 已生成 · ${Math.round(result.blob.size / 1024)} KB · ${result.hasAudio ? '含源音轨' : '素材无音轨'}`);
+    // 削波只告警，不自动压、不自动降音量（契约口径）。
+    if (job.warning) toast(`${job.warning} · ${Math.round(result.blob.size / 1024)} KB`);
+    else toast(`WebM 已生成 · ${Math.round(result.blob.size / 1024)} KB · 峰值 ${job.peakDb === null ? '无音频' : `${job.peakDb} dBFS`}`);
   } catch (error) { job.status = 'failed'; job.error = error.message || '导出失败'; toast(`导出失败：${job.error}`); }
   finally { exportBusy = false; $('exportVideo').textContent = '导出 WebM'; render(); }
 }
@@ -344,8 +361,10 @@ $('outPoint').onchange = () => { const item = clip(); if (item) apply({ type: 'm
 $('removeClip').onclick = () => { const item = clip(); if (item) apply({ type: 'media.video.clip.remove', clipId: item.id }); };
 $('addVideoTrack').onclick = () => apply({ type: 'media.video.track.add', track: { kind: 'video' } });
 $('addAudioTrack').onclick = () => apply({ type: 'media.video.track.add', track: { kind: 'audio' } });
+$('addTextTrack').onclick = () => apply({ type: 'media.video.track.add', track: { kind: 'text' } });
 function toggleOverlayComposer() {
-  if (!clip()) return toast('先导入视频再添加文字');
+  const textTrack = project().tracks.find(track => track.id === selectedTrackId && track.kind === 'text');
+  if (!clip() && !textTrack) return toast('先导入视频，或先选一条字幕轨');
   const composer = $('overlayComposer');
   composer.hidden = !composer.hidden;
   if (!composer.hidden) $('overlayText').focus();
@@ -354,6 +373,16 @@ function addOverlayText() {
   const input = $('overlayText');
   const text = input.value.trim();
   if (!text) { toast('请先输入叠加文字'); input.focus(); return; }
+  const selected = project().tracks.find(track => track.id === selectedTrackId);
+  // 选中字幕轨时，文字落成该轨上的一个片段（独立字幕轨）；否则仍是叠加对象。
+  if (selected && selected.kind === 'text') {
+    const start = project().timeline.currentTime ?? 0;
+    apply({ type: 'media.video.clip.add', clip: { trackId: selected.id, text, start, duration: 3 } });
+    input.value = '';
+    $('overlayComposer').hidden = true;
+    toast('已加入字幕轨片段，导出时会烧进成片');
+    return;
+  }
   apply({ type: 'media.video.overlay.add', overlay: { id: crypto.randomUUID(), kind: 'text', name: text.slice(0, 18), content: text } });
   input.value = '';
   $('overlayComposer').hidden = true;
@@ -367,6 +396,7 @@ $('overlayText').addEventListener('keydown', event => {
 });
 $('overlayList').onclick = event => { const id = event.target.dataset.removeOverlay; if (id) apply({ type: 'media.video.overlay.remove', overlayId: id }); };
 $('saveProject').onclick = saveSnapshot; $('openProject').onclick = () => $('projectInput').click(); $('projectInput').addEventListener('change', event => { openSnapshot(event.currentTarget.files?.[0]); event.currentTarget.value = ''; }); $('exportVideo').onclick = exportWebm;
+$('exportQuick').onclick = exportWebm;
 $('parseIntent').onclick = () => { try { if (!clip()) throw new Error('先导入视频再生成编辑意图'); showIntent(makeIntent($('intentInput').value)); } catch (error) { toast(error.message); } };
 document.querySelectorAll('.mode-option').forEach(button => button.onclick = () => { mode = button.dataset.mode; document.querySelectorAll('.mode-option').forEach(item => item.classList.toggle('active', item === button)); $('modeNote').textContent = mode === 'assist' ? '每次写入先预览并由你确认。' : '仅已授权低风险命令可自动执行；高风险仍需人工确认。自主授权仅为本地模拟。'; });
 $('grantCapability').onclick = () => { autonomousCapabilities.add('media.video.overlay.add'); toast('已授予本地模拟 capability：media.video.overlay.add'); };

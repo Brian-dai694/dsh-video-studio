@@ -1,5 +1,5 @@
 // Multi-track export: video tracks composite in order onto one canvas, audio tracks mix
-// through a WebAudio graph with a limiter, and the result is recorded as WebM.
+// through a WebAudio graph (linear volume, no compression), and the result is recorded as WebM.
 import { compositePlan } from './video-state.mjs';
 
 export function drawFrame(ctx, width, height, project, elements, time, images) {
@@ -15,6 +15,28 @@ export function drawFrame(ctx, width, height, project, elements, time, images) {
       const ratio = Math.min(width / element.videoWidth, height / element.videoHeight);
       const w = element.videoWidth * ratio, h = element.videoHeight * ratio;
       ctx.drawImage(element, (width - w) / 2, (height - h) / 2, w, h);
+    }
+  }
+  // 字幕轨：独立轨道上的文字片段，按轨道顺序叠在画面之上（不是叠加对象）。
+  // 未覆盖区间保持透明/黑底，不做保持、循环或拉伸。
+  for (const track of plan.text ?? []) {
+    for (const clip of track.clips) {
+      const end = clip.start + clip.out - clip.in;
+      if (time < clip.start || time >= end) continue;
+      const style = clip.style || {};
+      const size = Math.max(12, height * (Number(style.size) > 0 ? Number(style.size) : 0.06));
+      const lines = String(clip.text ?? '').split('\n').slice(0, 6);
+      ctx.save();
+      ctx.font = `${style.weight ?? 600} ${size}px ${style.family ?? 'sans-serif'}`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'bottom';
+      ctx.fillStyle = style.color ?? '#fff';
+      ctx.shadowColor = '#000';
+      ctx.shadowBlur = 6;
+      lines.forEach((line, index) => {
+        ctx.fillText(line, width / 2, height * 0.92 - (lines.length - 1 - index) * size * 1.35);
+      });
+      ctx.restore();
     }
   }
   for (const item of [...project.overlays].sort((a, b) => (a.zIndex || 0) - (b.zIndex || 0))) {
@@ -72,38 +94,72 @@ async function primeElements(plan, elements) {
 
 function buildAudioGraph(plan, elements, audioContext) {
   const destination = audioContext.createMediaStreamDestination();
-  const limiter = audioContext.createDynamicsCompressor();
-  limiter.threshold.value = -3;
-  limiter.knee.value = 0;
-  limiter.ratio.value = 20;
-  limiter.attack.value = 0.003;
-  limiter.release.value = 0.25;
-  limiter.connect(destination);
+  // 混音口径（契约）：volume 是线性倍数，不按轨数归一化；不做压缩、不做限幅、不自动降音量。
+  // 节点链顺序固定为：trim（片段 in/out 决定播放区间）→ 音量（GainNode）→ 输出。
+  // 将来加变速/包络/裁切/延时，就在这一层按 trim → 变速 → 音量 → 包络 → 裁切 → 延时 依次插入。
+  const master = audioContext.createAnalyser();
+  master.fftSize = 2048;
+  master.connect(destination);
+  const peakBuffer = new Float32Array(master.fftSize);
+  let peak = 0;
+  // 录制过程中按帧采样主总线，取样本绝对值最大值；结束时换算成 dBFS 回报。
+  const samplePeak = () => {
+    if (!master.getFloatTimeDomainData) return;
+    master.getFloatTimeDomainData(peakBuffer);
+    for (let index = 0; index < peakBuffer.length; index += 1) {
+      const value = Math.abs(peakBuffer[index]);
+      if (value > peak) peak = value;
+    }
+  };
   let sources = 0;
   let hasAudio = false;
   const attach = (element, volume) => {
     if (!element) return;
-    // A video clip may carry its own audio; routing it through the same limiter keeps a
+    // 视频片段自带音轨时也走同一条主总线（音量 1.0），与音频轨一起线性相加。
     // single-track project sounding exactly like before multi-track support.
-    try {
-      const probe = element.captureStream?.();
-      if (probe) {
-        if (probe.getAudioTracks().length) hasAudio = true;
-        probe.getTracks().forEach(track => track.stop());
-      }
-    } catch { /* captureStream unsupported */ }
+    // 不做 captureStream 探测：同一元素先被 captureStream 抓过再 createMediaElementSource，
+    // Chromium 里会让它的音轨时有时无。hasAudio 改为录制结束后按解码字节数判定。
     const gain = audioContext.createGain();
+    // 线性倍数，0..2；不按输入数除、不做归一化。
     gain.gain.value = Math.max(0, Math.min(2, volume ?? 1));
-    gain.connect(limiter);
-    try {
-      const source = audioContext.createMediaElementSource(element);
+    gain.connect(master);
+    // 同一个媒体元素只绑定一次 source，之后每次导出重新接线到本次的 gain 上。
+    let source = elementSources.get(element);
+    if (!source) {
+      try {
+        source = audioContext.createMediaElementSource(element);
+        elementSources.set(element, source);
+      } catch { source = null; }
+    }
+    if (source) {
+      try { source.disconnect(); } catch { /* not connected */ }
       source.connect(gain);
       sources += 1;
-    } catch { /* element already routed */ }
+    }
   };
-  for (const track of plan.video) for (const clip of track.clips) attach(elements.get(clip.sourceRef), 1);
-  for (const track of plan.audio) for (const clip of track.clips) attach(elements.get(clip.sourceRef), track.volume ?? 1);
-  return { destination, sources, hasAudio: hasAudio || plan.audio.length > 0 };
+  // 视频轨也按自身 volume 接入；同一素材只允许一条音频链，重复引用直接拒绝。
+  const seenAudioRefs = new Set();
+  const attachOnce = (ref, volume) => {
+    if (ref && seenAudioRefs.has(ref)) {
+      throw Object.assign(new Error('DUPLICATE_AUDIO_SOURCE: 同一素材在两条轨道上同时发声，请先静音其中一轨或删掉一处引用'), { code: 'DUPLICATE_AUDIO_SOURCE' });
+    }
+    if (ref) seenAudioRefs.add(ref);
+    attach(elements.get(ref), volume ?? 1);
+  };
+  // 有效增益为 0 的轨（静音）不接音频链：既没有声音，也不该被当成“重复发声”。
+  const attachAudible = (ref, volume) => { if ((volume ?? 1) > 0) attachOnce(ref, volume); };
+  for (const track of plan.video) for (const clip of track.clips) attachAudible(clip.sourceRef, track.volume ?? 1);
+  for (const track of plan.audio) for (const clip of track.clips) attachAudible(clip.sourceRef, track.volume ?? 1);
+  return { destination, sources, hasAudio: plan.audio.length > 0, samplePeak, peakValue: () => peak, peakDb: () => peakToDb(peak) };
+}
+
+// 峰值 PCM 换算：1.0 = 0 dBFS。混音只回报峰值，不做压缩、不自动降音量。
+export const peakToDb = value => (value > 0 ? 20 * Math.log10(value) : -Infinity);
+
+// peak ≤ 1.0（0 dBFS 以内）正常返回；超过则成功返回但带中文告警，交给用户决定怎么降。
+export function clipWarning(peakDb) {
+  if (!Number.isFinite(peakDb) || peakDb <= 0) return null;
+  return `混音削波，峰值 +${peakDb.toFixed(1)} dB，请降低部分轨道音量`;
 }
 
 // 导出必须在可见的前台标签页里跑：后台标签的 requestAnimationFrame 会被浏览器节流，
@@ -115,9 +171,18 @@ export function assertForeground(doc = globalThis.document) {
   }
 }
 
+// 同一页面里多次导出必须复用同一个 AudioContext：createMediaElementSource 对同一元素只能
+// 绑定一次，第一个上下文关闭后元素就永久绑在死上下文上——第二次导出会变哑巴。
+let sharedAudioContext = null;
+const elementSources = new WeakMap();
+function audioContextFor() {
+  if (!sharedAudioContext) sharedAudioContext = new AudioContext();
+  return sharedAudioContext;
+}
+
 export async function recordComposition({ project, elements, mimeType, onProgress = () => {} }) {
   const plan = compositePlan(project);
-  if (!plan.video.some(track => track.clips.length)) throw new Error('工程中没有可导出的视频片段');
+  if (!plan.video.some(track => track.clips.length)) throw new Error('纯音频工程暂不支持导出视频，请至少放入一个视频片段');
   assertForeground();
   if (!mimeType || !MediaRecorder.isTypeSupported(mimeType)) throw new Error('当前浏览器没有可用的 WebM 编码器');
 
@@ -130,8 +195,13 @@ export async function recordComposition({ project, elements, mimeType, onProgres
   canvas.width = probe.videoWidth;
   canvas.height = probe.videoHeight;
   const ctx = canvas.getContext('2d');
-  const audioContext = new AudioContext();
-  await audioContext.resume().catch(() => {});
+  const audioContext = audioContextFor();
+  // 没有用户手势时浏览器会把 AudioContext 挂在 suspended，resume() 会一直 pending，
+  // 导出就永远停在“导出中…”且进度为 0。这里只等一次，仍不可用就给出可执行的中文原因。
+  await Promise.race([audioContext.resume().catch(() => {}), new Promise(resolve => setTimeout(resolve, 800))]);
+  if (audioContext.state !== 'running') {
+    throw Object.assign(new Error('浏览器拦截了音频播放：请先在页面上点一下再导出（需要用户手势）'), { code: 'EXPORT_AUDIO_BLOCKED' });
+  }
   await primeElements(plan, elements);
 
   let stream, audioGraph, recorder, frame, timer, interrupted = null;
@@ -169,6 +239,7 @@ export async function recordComposition({ project, elements, mimeType, onProgres
     const draw = () => {
       const time = (performance.now() - started) / 1000;
       drawFrame(ctx, canvas.width, canvas.height, project, elements, time, images);
+      audioGraph.samplePeak();
       onProgress(Math.min(1, time / duration));
       if (time >= duration) {
         if (recorder.state === 'recording') recorder.stop();
@@ -191,7 +262,12 @@ export async function recordComposition({ project, elements, mimeType, onProgres
       videoTracks: plan.video.length,
       audioTracks: plan.audio.length,
       audioSources: audioGraph.sources,
-      hasAudio: audioGraph.hasAudio,
+      // 视频片段自带音轨：播放结束后按浏览器已经解码的音频字节数判定，避免误报“无音频”。
+      hasAudio: audioGraph.hasAudio || [...elements.values()].some(element => (element.webkitAudioDecodedByteCount ?? 0) > 0),
+      // 峰值只回报，不修改音频；判定只认 peakDb（dBFS），peak 是线性倍数，方便对契约原文。
+      peak: Number(audioGraph.peakValue().toFixed(4)),
+      peakDb: Number.isFinite(audioGraph.peakDb()) ? Number(audioGraph.peakDb().toFixed(2)) : null,
+      warning: clipWarning(audioGraph.peakDb()),
     };
   } finally {
     document.removeEventListener('visibilitychange', onVisibility);
@@ -199,6 +275,6 @@ export async function recordComposition({ project, elements, mimeType, onProgres
     clearTimeout(timer);
     for (const element of elements.values()) { try { element.pause(); } catch { /* detached */ } }
     stream?.getTracks().forEach(track => track.stop());
-    await audioContext.close().catch(() => {});
+    // 共享上下文不关闭：关闭会让已绑定的元素在下次导出时失声。
   }
 }

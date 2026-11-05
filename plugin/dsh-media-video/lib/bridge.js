@@ -63,7 +63,12 @@ function validateVideoCommand(command) {
   }
   switch (command.type) {
     case 'media.video.clip.add':
-      opaqueId(p.sourceRef, 'sourceRef');
+      // 字幕片段只带文字；视频/音频片段必须给 sourceRef（素材引用）。
+      if (p.text !== undefined) {
+        if (typeof p.text !== 'string' || !p.text.trim() || p.text.length > 4000) throw new MediaBridgeError('INVALID_REQUEST', 'Text clip needs 1-4000 characters.');
+      } else {
+        opaqueId(p.sourceRef, 'sourceRef');
+      }
       if (p.trackId !== undefined) opaqueId(p.trackId, 'trackId');
       if (p.startUs !== undefined) finite(p.startUs, 'startUs', { min: 0 });
       // in/out define the trim range together: half a range is ambiguous, so reject it
@@ -77,7 +82,7 @@ function validateVideoCommand(command) {
       }
       break;
     case 'media.video.track.add':
-      if (!['video', 'audio'].includes(p.kind)) throw new MediaBridgeError('INVALID_REQUEST', 'Track kind must be video or audio.');
+      if (!['video', 'audio', 'text'].includes(p.kind)) throw new MediaBridgeError('INVALID_REQUEST', 'Track kind must be video, audio or text.');
       if (p.trackId !== undefined) opaqueId(p.trackId, 'trackId');
       if (p.name !== undefined && (typeof p.name !== 'string' || p.name.length > 120)) throw new MediaBridgeError('INVALID_REQUEST', 'Track name must be a string up to 120 characters.');
       break;
@@ -93,12 +98,16 @@ function validateVideoCommand(command) {
       if (['mute', 'solo', 'volume', 'name'].every(key => p[key] === undefined)) throw new MediaBridgeError('INVALID_REQUEST', 'Provide at least one of mute, solo, volume or name.');
       break;
     case 'media.video.clip.trim':
+      // 裁剪只认 clipId + 入出点：带 startUs 一律拒绝，移动与裁剪不允许互相污染。
+      fieldsOnly(p, ['clipId', 'inUs', 'outUs']);
       opaqueId(p.clipId, 'clipId');
       if (p.inUs === undefined && p.outUs === undefined) throw new MediaBridgeError('INVALID_REQUEST', 'At least one trim boundary is required.');
       if (p.inUs !== undefined) finite(p.inUs, 'inUs', { min: 0 });
       if (p.outUs !== undefined) finite(p.outUs, 'outUs', { min: 0 });
       break;
     case 'media.video.clip.move':
+      // 移动只认 clipId + 起点/目标轨道：带入出点一律拒绝。
+      fieldsOnly(p, ['clipId', 'startUs', 'trackId']);
       opaqueId(p.clipId, 'clipId');
       if (p.trackId !== undefined) opaqueId(p.trackId, 'trackId');
       if (p.startUs !== undefined) finite(p.startUs, 'startUs', { min: 0 });

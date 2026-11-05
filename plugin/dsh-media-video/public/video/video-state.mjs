@@ -2,11 +2,13 @@
 // microseconds on the tool wire; clips live on tracks, track order is the composite order.
 const nextId = () => globalThis.crypto?.randomUUID?.() ?? `id-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 const clone = value => JSON.parse(JSON.stringify(value));
-export const TRACK_KINDS = ['video', 'audio'];
+export const TRACK_KINDS = ['video', 'audio', 'text'];
+// 轨道类型中文标签：字幕是一条独立轨道（单轨 cues），不是叠加对象。
+export const TRACK_LABELS = { video: '视频', audio: '音频', text: '字幕' };
 const round = value => Math.round(value * 1e6) / 1e6;
 
 export function createTrack(kind, index) {
-  return { id: nextId(), kind, name: `${kind === 'video' ? '视频' : '音频'} ${index + 1}`, order: index, mute: false, solo: false, volume: 1, clips: [] };
+  return { id: nextId(), kind, name: `${TRACK_LABELS[kind] ?? '视频'} ${index + 1}`, order: index, mute: false, solo: false, volume: 1, clips: [] };
 }
 
 export function createProject() {
@@ -23,18 +25,46 @@ export function createProject() {
 
 // Old single-track projects stored clips on a `kind:'overlay'` companion track and had no
 // per-track properties. Normalise both shapes so an existing project still opens.
+// 同一素材不允许被两条轨道同时发声：一个媒体元素只能接一条音频链，重复引用会让
+// 音量语义变得不可预测（改一轨却影响两处声音），所以写入时就拒绝。
+function assertUniqueAudioSource(project, sourceRef, trackId) {
+  if (!sourceRef) return;
+  for (const track of project.tracks) {
+    if (track.id === trackId || track.mute || track.kind === 'text') continue;
+    if (track.clips.some(clip => clip.sourceRef === sourceRef)) {
+      const error = new Error('DUPLICATE_AUDIO_SOURCE: 同一素材已在另一条轨道上发声，请先静音该轨或删掉那处引用');
+      error.code = 'DUPLICATE_AUDIO_SOURCE';
+      throw error;
+    }
+  }
+}
+
+// 同轨时间重叠一律拒绝：空隙是合法状态，重叠不是。轨道顺序即层级，不做隐式吸收。
+function assertNoOverlap(track, start, end, excludeId) {
+  const from = round(start), to = round(end);
+  for (const clip of track.clips) {
+    if (clip.id === excludeId) continue;
+    const clipEnd = round(clip.start + clip.out - clip.in);
+    if (from < clipEnd - 1e-6 && to > clip.start + 1e-6) {
+      const error = new Error('该轨道在此位置已有片段（TRACK_OVERLAP），请换个位置或先调整已有片段');
+      error.code = 'TRACK_OVERLAP';
+      throw error;
+    }
+  }
+}
+
 export function normalizeProject(input) {
   const project = clone(input);
   const tracks = [];
-  let videoIndex = 0, audioIndex = 0;
+  const kindIndex = { video: 0, audio: 0, text: 0 };
   for (const track of project.tracks ?? []) {
     if (track.kind === 'overlay') continue;
     const kind = TRACK_KINDS.includes(track.kind) ? track.kind : 'video';
-    const index = kind === 'video' ? videoIndex++ : audioIndex++;
+    const index = kindIndex[kind]++;
     const normalized = {
       id: track.id || nextId(),
       kind,
-      name: track.name || `${kind === 'video' ? '视频' : '音频'} ${index + 1}`,
+      name: track.name || `${TRACK_LABELS[kind]} ${index + 1}`,
       order: tracks.length,
       mute: track.mute === true,
       solo: track.solo === true,
@@ -71,10 +101,13 @@ export const projectDuration = project => allClips(project)
 export function compositePlan(project) {
   const soloed = project.tracks.some(track => track.solo);
   const active = project.tracks.filter(track => !track.mute && (!soloed || track.solo));
+  // 视频轨 mute 只静声音、不撤画面：否则静音唯一那条视频轨会让整片没有画面可导出。
   return {
     duration: projectDuration(project),
-    video: active.filter(track => track.kind === 'video').map((track, index) => ({ trackId: track.id, order: index, clips: track.clips.map(clip => ({ ...clip, trackId: track.id })) })),
+    video: project.tracks.filter(track => track.kind === 'video').map((track, index) => ({ trackId: track.id, order: index, volume: track.mute ? 0 : track.volume, clips: track.clips.map(clip => ({ ...clip, trackId: track.id })) })),
     audio: active.filter(track => track.kind === 'audio').map(track => ({ trackId: track.id, volume: track.volume, clips: track.clips.map(clip => ({ ...clip, trackId: track.id })) })),
+    // 字幕轨是独立轨道：按轨道顺序参与合成，不是叠加对象。
+    text: active.filter(track => track.kind === 'text').map(track => ({ trackId: track.id, order: track.order, clips: track.clips.map(clip => ({ ...clip, trackId: track.id })) })),
   };
 }
 
@@ -96,12 +129,26 @@ export function reduceProject(project, command) {
   switch (command.type) {
     case 'media.video.clip.add': {
       const clip = command.clip ?? {};
-      if (!Number.isFinite(clip.duration) || clip.duration <= 0) throw new Error('视频时长无效');
       const track = trackFor(next, clip.trackId);
       if (!track) throw new Error('目标轨道不存在');
+      // 字幕轨：一个片段就是一条 cue，只带文字与时间窗（不做 document/timing/Use 三层）。
+      if (track.kind === 'text') {
+        const text = String(clip.text ?? '').trim();
+        if (!text) throw new Error('字幕片段必须带文字');
+        const start = Math.max(0, clip.start ?? 0);
+        const length = Math.max(0.05, Number(clip.duration) || 4);
+        assertNoOverlap(track, start, start + length);
+        track.clips.push({ id: clip.id || nextId(), text: text.slice(0, 4000), style: clip.style ?? null, duration: length, start, in: 0, out: length, trackId: track.id });
+        next.selection = track.clips.at(-1).id;
+        touch();
+        break;
+      }
+      if (!Number.isFinite(clip.duration) || clip.duration <= 0) throw new Error('视频时长无效');
       const start = Math.max(0, clip.start ?? 0);
       const input = Math.max(0, Math.min(clip.in ?? 0, clip.duration - 0.05));
       const output = Math.max(input + 0.05, Math.min(clip.out ?? clip.duration, clip.duration));
+      assertNoOverlap(track, start, start + output - input);
+      assertUniqueAudioSource(next, clip.sourceRef, track.id);
       track.clips.push({ id: clip.id || nextId(), sourceRef: clip.sourceRef, name: clip.name, duration: clip.duration, in: input, out: output, start, trackId: track.id });
       if (track.kind === 'video' && !next.source) next.source = { sourceRef: clip.sourceRef, name: clip.name };
       next.selection = track.clips.at(-1).id;
@@ -112,8 +159,11 @@ export function reduceProject(project, command) {
       const found = findClip(next, command.clipId);
       if (!found) throw new Error('未找到目标片段');
       const { clip } = found;
+      // 移动与裁剪语义分离：裁剪只改素材入出点，绝不改时间线起点（start）。
+      if (command.start !== undefined) throw new Error('裁剪只改素材入出点；要移动请用 clip.move');
       const input = Math.max(0, Math.min(command.in ?? clip.in, clip.duration - 0.05));
       const output = Math.max(input + 0.05, Math.min(command.out ?? clip.out, clip.duration));
+      assertNoOverlap(found.track, clip.start, clip.start + output - input, clip.id);
       clip.in = input; clip.out = output;
       touch();
       break;
@@ -121,11 +171,19 @@ export function reduceProject(project, command) {
     case 'media.video.clip.move': {
       const found = findClip(next, command.clipId);
       if (!found) throw new Error('未找到目标片段');
+      // 移动只改时间线起点与所在轨道，绝不改素材入出点（in/out）。
+      if (command.in !== undefined || command.out !== undefined) throw new Error('移动不改素材入出点；要裁剪请用 clip.trim');
       const starts = command.start !== undefined;
       if (!starts && !command.trackId) throw new Error('目标片段或位置无效');
       if (starts) {
         if (!Number.isFinite(command.start)) throw new Error('目标片段或位置无效');
-        found.clip.start = Math.max(0, command.start);
+        const length = found.clip.out - found.clip.in;
+        const targetTrack = command.trackId && command.trackId !== found.track.id ? trackFor(next, command.trackId) : found.track;
+        if (!targetTrack) throw new Error('目标轨道不存在');
+        const target = Math.max(0, command.start);
+        assertNoOverlap(targetTrack, target, target + length, found.clip.id);
+        if (targetTrack.id !== found.track.id) assertUniqueAudioSource(next, found.clip.sourceRef, targetTrack.id);
+        found.clip.start = target;
       }
       if (command.trackId && command.trackId !== found.track.id) {
         const target = trackFor(next, command.trackId);
@@ -208,11 +266,29 @@ export function reduceProject(project, command) {
 }
 
 const stable = value => Array.isArray(value) ? `[${value.map(stable).join(',')}]` : value && typeof value === 'object' ? `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${stable(value[key])}`).join(',')}}` : JSON.stringify(value);
-export function stateDigest(project) {
-  const input = stable({ source: project.source, timeline: { duration: project.timeline.duration, fps: project.timeline.fps }, tracks: project.tracks, overlays: project.overlays });
+// 内容摘要：只含内容。轨道属性（mute/solo/volume）与叠加对象都在内，
+// 播放头 currentTime、选中 selection 这类 UI 态一律不进内容版本。
+export function contentDigest(project) {
+  const input = stable({
+    source: project.source,
+    timeline: { duration: project.timeline.duration, fps: project.timeline.fps },
+    tracks: project.tracks,
+    overlays: project.overlays,
+  });
   let hash = 2166136261;
   for (let i = 0; i < input.length; i++) { hash ^= input.charCodeAt(i); hash = Math.imul(hash, 16777619); }
   return `fnv1a32-${(hash >>> 0).toString(16).padStart(8, '0')}`;
+}
+
+// 兼容层（deprecated）：老调用方仍读 stateDigest，语义等同 contentDigest。
+export const stateDigest = contentDigest;
+
+// UI 瞬时态：改这些不算内容修改，不进 revision，也不进 diff。
+export function viewState(project) {
+  return {
+    currentTime: Math.round((project.timeline.currentTime ?? 0) * 1e6) / 1e6,
+    selection: project.selection ?? null,
+  };
 }
 export function readState(project, history, instanceId, capabilities = {}) {
   const clips = allClips(project);
@@ -220,11 +296,26 @@ export function readState(project, history, instanceId, capabilities = {}) {
   return {
     editorKind: 'video', contractVersion: 1,
     projectId: project.projectId, documentId: project.projectId, editorInstanceId: instanceId,
-    revision: project.revision, stateDigest: stateDigest(project),
+    revision: project.revision,
+    contentDigest: contentDigest(project),
+    viewState: viewState(project),
+    stateDigest: contentDigest(project),
     timeline: clone(project.timeline),
-    tracks: project.tracks.map(track => ({ id: track.id, kind: track.kind, name: track.name, order: track.order, mute: track.mute, solo: track.solo, volume: track.volume, clipCount: track.clips.length })),
+    // solo 优先于 mute：solo 集合非空时非 solo 轨一律不出声；mute 与 solo 同为真按 solo 算。
+    // effective 是“实际可听态”，调用方不该自己再推一遍布尔逻辑。
+    tracks: project.tracks.map(track => ({
+      id: track.id, kind: track.kind, name: track.name, order: track.order,
+      mute: track.mute, solo: track.solo, volume: track.volume, clipCount: track.clips.length,
+      effective: {
+        audible: project.tracks.some(item => item.solo) ? track.solo && track.kind !== 'text' : (!track.mute && track.kind !== 'text'),
+        visible: project.tracks.some(item => item.solo) ? track.solo : !track.mute,
+        // 视频轨也有音量：受 track.update volume 控制；静音后实际增益是 0（画面仍在）。
+        gain: track.kind === 'text' ? null : (track.mute ? 0 : track.volume),
+      },
+    })),
     trackClips: project.tracks.map(track => ({ trackId: track.id, clips: clone(track.clips) })),
-    clips: clone(clips),
+    // 契约暴露 sourceTime 形状（微秒、rate=1）；状态内部仍存秒制 in/out，将来加变速/循环不破契约。
+    clips: clone(clips).map(clip => ({ ...clip, sourceTime: { startUs: Math.round((clip.in ?? 0) * 1e6), endUs: Math.round((clip.out ?? 0) * 1e6), rate: 1 } })),
     overlays: clone(project.overlays),
     selectedObjects: selected ? [clone(selected)] : [],
     history: { canUndo: canUndo(history), canRedo: canRedo(history), undoDepth: history.past.length, redoDepth: history.future.length, topCommandId: project.lastCommandId || null },
