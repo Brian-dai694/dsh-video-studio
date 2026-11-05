@@ -1,0 +1,8 @@
+{
+  "source": "dsh-image-studio/shared/dialog-model.mjs",
+  "sourceCommit": "fe3bf48",
+  "sha256": "8bd2f507e1ca6ad0e14a2b59f171db479964e0793da789c14bf7ff820da01728",
+  "bytes": 9365,
+  "version": "dialog-model@1",
+  "rule": "整份复制，不逐段改；升级时整份替换并更新这里与测试里的 sha256。"
+}

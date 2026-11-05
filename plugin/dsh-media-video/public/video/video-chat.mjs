@@ -1,4 +1,7 @@
 // 视频编辑器对话面板：消息映射、工具卡片、输入区与审批状态。
+// 渲染路径与图片侧共用 shared/dialog-model.mjs（vendor 在 ./vendor/dialog-model.mjs）。
+//
+import { buildDialogPlan, looksLikeRawJson, DIALOG_MODEL_VERSION } from './vendor/dialog-model.mjs';
 //
 // 规则（与图片侧一致，不允许出现第二套风格）：
 // 1) 任何消息都不显示原始 JSON；解析不了就退回一句话摘要。
@@ -13,8 +16,9 @@ const KIND_LABEL = {
   toolResult: '工具结果',
   approval: '审批',
   error: '错误',
-  system: '系统',
 };
+
+export const DIALOG_MODEL = 'dialog-model@1';
 
 const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
 
@@ -294,8 +298,137 @@ export function mountChat({ root, onLocate, onOpenSession, onSend, onRetry, init
     for (const message of initialMessages) append(message);
   }, 320);
 
+  // ── 共享计划渲染（dialog-model@1 的输出直接进这里）──
+  function blocksHtml(blocks) {
+    return (blocks || []).map(block => {
+      if (!block || !block.kind) return '';
+      if (block.kind === 'heading') return `<h4>${escapeHtml(block.text || '')}</h4>`;
+      if (block.kind === 'list') return `<ul>${(block.items || []).map(item => `<li>${escapeHtml(String(item))}</li>`).join('')}</ul>`;
+      if (block.kind === 'code') return `<pre><code>${escapeHtml(block.text || '')}</code></pre>`;
+      if (block.kind === 'quote') return `<blockquote>${escapeHtml(block.text || '')}</blockquote>`;
+      return `<p>${escapeHtml(block.text || '')}</p>`;
+    }).join('');
+  }
+
+  function planCard(item) {
+    const locate = item.locate || {};
+    const card = document.createElement('button');
+    card.type = 'button';
+    card.className = 'tool-card';
+    card.setAttribute('data-tool-card', '');
+    if (locate.objectIds?.length) {
+      card.dataset.objectIds = locate.objectIds.join(',');
+      card.dataset.objectKind = locate.kind || '';
+    }
+    const head = document.createElement('div');
+    head.className = 'tool-card-head';
+    const title = document.createElement('strong');
+    title.textContent = item.card.name || '工具调用';
+    head.appendChild(title);
+    if (item.badge) {
+      const chip = document.createElement('span');
+      chip.className = `tool-badge badge-${item.badge}`;
+      chip.setAttribute('data-badge', item.badge);
+      chip.textContent = item.badge === 'unknown' ? '结果未知 · 不要重放' : item.badge === 'pending' ? '执行中' : item.badge === 'rejected' ? '已拒绝' : '已执行';
+      head.appendChild(chip);
+    }
+    card.appendChild(head);
+    const meta = document.createElement('small');
+    meta.textContent = item.card.line || (locate.objectIds?.length ? '点击定位到时间线片段' : '无可定位对象');
+    card.appendChild(meta);
+    if (locate.objectIds?.length) {
+      card.addEventListener('click', () => onLocate?.({ objectIds: locate.objectIds, kind: locate.kind }));
+    } else {
+      card.disabled = true;
+      card.classList.add('is-flat');
+    }
+    return card;
+  }
+
+  function renderPlanItem(item) {
+    const node = document.createElement('article');
+    node.className = `chat-message chat-${item.kind}`;
+    node.setAttribute('data-plan-key', item.key);
+    if (item.title) {
+      const heading = document.createElement('span');
+      heading.className = 'chat-who';
+      heading.textContent = item.title;
+      node.appendChild(heading);
+    }
+    if (item.card) {
+      node.appendChild(planCard(item));
+    } else if (item.blocks?.length) {
+      const body = document.createElement('div');
+      body.className = 'chat-body';
+      body.innerHTML = blocksHtml(item.blocks);
+      node.appendChild(body);
+    }
+    if (item.issue) {
+      const issue = document.createElement('p');
+      issue.className = 'chat-issue';
+      issue.textContent = item.issue;
+      node.appendChild(issue);
+    }
+    if (item.diagnostic) {
+      // 原始诊断只进剪贴板，不进 DOM。
+      const copy = document.createElement('button');
+      copy.type = 'button';
+      copy.className = 'secondary-btn chat-diagnostic';
+      copy.textContent = '复制诊断信息';
+      copy.addEventListener('click', () => { void navigator.clipboard?.writeText?.(item.diagnostic); copy.textContent = '已复制'; });
+      node.appendChild(copy);
+    }
+    for (const action of item.actions || []) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'secondary-btn chat-action';
+      button.dataset.action = action.kind;
+      if (action.kind === 'open-native') {
+        button.textContent = action.label || '打开原生会话';
+        if (typeof onOpenSession === 'function') button.addEventListener('click', () => onOpenSession());
+        else { button.disabled = true; button.title = '宿主没有提供打开原生会话的入口'; }
+      } else if (action.kind === 'fill-undo') {
+        button.textContent = action.label || '填入撤销指令';
+        if (action.hint) button.title = action.hint;
+        const prompt = item.undoPrompt || '';
+        if (!prompt) { button.disabled = true; button.title = '缺少撤销凭据（commandId/appliedRevision/afterDigest）'; }
+        button.addEventListener('click', () => {
+          if (!composer || !prompt) return;
+          composer.value = prompt;
+          composer.dispatchEvent(new Event('input', { bubbles: true }));
+          composer.focus();
+        });
+      } else {
+        button.textContent = action.label || action.kind;
+        button.disabled = true;
+        button.title = '当前页面不提供该能力';
+      }
+      node.appendChild(button);
+    }
+    list.appendChild(node);
+    scrollToEnd();
+  }
+
+  function appendPlan(item) {
+    state.messages.push(item);
+    const empty = list.querySelector('.chat-empty');
+    if (empty) empty.remove();
+    renderPlanItem(item);
+  }
+
+  function appendRows(rows) {
+    const plans = buildDialogPlan(rows);
+    plans.forEach((plan, index) => {
+      // locate 与撤销文案来自行本身，不塞进共享模型（架构师：P1 只加 transport，不改数据结构）。
+      const row = rows[index] || {};
+      appendPlan({ ...plan, locate: row.locate || null, undoPrompt: row.undoPrompt || '' });
+    });
+  }
+
   return {
     append,
+    appendPlan,
+    appendRows,
     showError,
     get messages() { return [...state.messages]; },
     setSending,

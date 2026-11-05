@@ -3,7 +3,7 @@ import { detectWebmCapability } from './video-capabilities.mjs';
 import { createEditorBridge } from './video-bridge.mjs';
 import { recordComposition, assertForeground } from './video-export.mjs';
 import { sourceRefFor, digestOf, sameContent, legacyMatches } from './video-sources.mjs';
-import { mountChat } from './video-chat.mjs';
+import { mountChat, formatMicros } from './video-chat.mjs';
 
 const $ = id => document.getElementById(id);
 const instanceId = crypto.randomUUID();
@@ -22,7 +22,7 @@ const allClips = () => project().tracks.flatMap(track => track.clips.map(clip =>
 const clip = () => allClips().find(item => item.id === project().selection) || allClips().find(item => item.trackKind === 'video') || null;
 const format = seconds => { const value = Math.max(0, Number(seconds) || 0); return `${String(Math.floor(value / 60)).padStart(2, '0')}:${String(Math.floor(value % 60)).padStart(2, '0')}.${String(Math.floor(value * 100 % 100)).padStart(2, '0')}`; };
 function toast(message) { const node = $('toast'); node.textContent = message; node.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => node.classList.remove('show'), 2400); }
-function apply(command, commandId = null) { if (exportBusy) throw Object.assign(new Error('导出期间请等待完成后再修改工程'), { code: 'EXPORT_BUSY' }); if (command.type === 'media.video.history.undo' || command.type === 'media.video.history.redo') { const backwards = command.type.endsWith('.undo'); if (!(backwards ? canUndo(history) : canRedo(history))) throw Object.assign(new Error('没有可撤销或重做的修改'), { code: 'HISTORY_EMPTY' }); history = backwards ? undo(history) : redo(history); render(); return readState(project(), history, instanceId, capabilities()); } const before = readState(project(), history, instanceId, capabilities()); const next = reduceProject(project(), command); next.lastCommandId = commandId; history = commit(history, next); const after = readState(project(), history, instanceId, capabilities()); $('auditDigest').textContent = `${before.stateDigest.slice(-8)} → ${after.stateDigest.slice(-8)} · R${before.revision}→R${after.revision}`; render(); globalThis.__dshChatTool?.(command, after); return after; }
+function apply(command, commandId = null) { if (exportBusy) throw Object.assign(new Error('导出期间请等待完成后再修改工程'), { code: 'EXPORT_BUSY' }); if (command.type === 'media.video.history.undo' || command.type === 'media.video.history.redo') { const backwards = command.type.endsWith('.undo'); if (!(backwards ? canUndo(history) : canRedo(history))) throw Object.assign(new Error('没有可撤销或重做的修改'), { code: 'HISTORY_EMPTY' }); history = backwards ? undo(history) : redo(history); render(); return readState(project(), history, instanceId, capabilities()); } const before = readState(project(), history, instanceId, capabilities()); const next = reduceProject(project(), command); next.lastCommandId = commandId; history = commit(history, next); const after = readState(project(), history, instanceId, capabilities()); $('auditDigest').textContent = `${before.stateDigest.slice(-8)} → ${after.stateDigest.slice(-8)} · R${before.revision}→R${after.revision}`; render(); globalThis.__dshChatTool?.(command, after, { commandId, beforeDigest: before.stateDigest }); return after; }
 function recordPlaybackTime(time) { const next = reduceProject(project(), { type: 'media.video.timeline.seek', time }); history = { ...history, present: next }; }
 function capabilities() { return { webm: webmCapability.status === 'available' }; }
 function probeCapabilities() { webmCapability = detectWebmCapability($('video')); const label = $('webmCapability'); label.textContent = webmCapability.status === 'available' ? `可用 (${webmCapability.mimeType})` : '不可用'; label.title = webmCapability.reason; label.className = webmCapability.status === 'available' ? '' : 'unknown'; $('exportVideo').disabled = webmCapability.status !== 'available' || !clip(); }
@@ -421,7 +421,9 @@ function highlightObjects(objectIds, ttlMs) {
   const matched = [];
   const missing = [];
   for (const id of objectIds) {
-    const node = $('trackList').querySelector(`[data-clip="${id}"]`) || $('overlayLane').querySelector(`[data-overlay="${id}"]`);
+    const node = $('trackList').querySelector(`[data-clip="${id}"]`)
+      || $('overlayLane').querySelector(`[data-overlay="${id}"]`)
+      || $('trackList').querySelector(`[data-track-row="${id}"]`);
     if (!node) { missing.push(id); continue; }
     matched.push(id);
     node.classList.add('clip-highlight');
@@ -464,39 +466,47 @@ const chat = mountChat({
   ],
 });
 
-function locateClipFromCard({ trackId, clipId }) {
-  const target = allClips().find(item => item.id === clipId) || null;
-  if (!target) {
-    chat.showError('这个片段已不在工程里（可能被删除或撤销）');
+function locateClipFromCard(payload = {}) {
+  const ids = payload.objectIds?.length ? payload.objectIds : [payload.clipId].filter(Boolean);
+  const target = ids.map(id => allClips().find(item => item.id === id)).find(Boolean) || null;
+  const track = ids.map(id => project().tracks.find(item => item.id === id)).find(Boolean) || null;
+  if (!target && !track) {
+    chat.showError('这个对象已不在工程里（可能被删除或撤销）');
     return;
   }
-  // 只改选中与描边：不 bump revision、不进历史、不写文档。
-  history = { ...history, present: { ...project(), selection: target.id } };
-  selectedTrackId = target.trackId || trackId || selectedTrackId;
-  render();
-  const node = $('trackList').querySelector(`[data-clip="${target.id}"]`);
-  if (node) {
-    node.classList.add('clip-highlight');
-    node.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-    setTimeout(() => node.classList.remove('clip-highlight'), 1500);
+  if (target) {
+    // 只改选中与描边：不 bump revision、不进历史、不写文档。
+    history = { ...history, present: { ...project(), selection: target.id } };
+    selectedTrackId = target.trackId || payload.trackId || selectedTrackId;
+    render();
   }
-  chat.showError('');
+  const { matched } = highlightObjects(ids, 1500);
+  if (!matched.length) chat.showError('没有找到可高亮的对象');
+  else chat.showError('');
 }
 
-// 每次成功写入后追加一张工具卡片：名称 + 轨道/片段身份 + 起止微秒，不渲染原始 JSON。
-globalThis.__dshChatTool = (command, after) => {
+// 每次成功写入后追加一张工具卡片：走共享 dialog-model 的计划路径。
+// line 里只放身份摘要（轨道/片段/起止），原始命令与回执不进 DOM。
+globalThis.__dshChatTool = (command, after, meta = {}) => {
   const clipId = command.clipId || command.clip?.id || (command.type === 'media.video.clip.add' ? after?.selection : null);
   const target = clipId ? allClips().find(item => item.id === clipId) : null;
-  chat.append({
-    kind: 'tool',
-    tool: {
-      name: command.type,
-      trackId: command.trackId || target?.trackId || null,
-      clipId: clipId || null,
-      startMicros: target ? Math.round(target.start * 1e6) : undefined,
-      endMicros: target ? Math.round((target.start + (target.out - target.in)) * 1e6) : undefined,
-    },
-  });
+  const trackId = command.trackId || target?.trackId || null;
+  const parts = [command.type];
+  if (trackId) parts.push(`轨道 ${String(trackId).slice(0, 8)}…`);
+  if (clipId) parts.push(`片段 ${String(clipId).slice(0, 6)}…`);
+  if (target) parts.push(`${formatMicros(Math.round(target.start * 1e6))}–${formatMicros(Math.round((target.start + (target.out - target.in)) * 1e6))}`);
+  const undo = meta.commandId && meta.beforeDigest ? {
+    commandId: meta.commandId, appliedRevision: after?.revision, afterDigest: after?.stateDigest,
+  } : null;
+  chat.appendRows([{
+    id: crypto.randomUUID(),
+    role: 'tool',
+    card: { name: '时间线命令', status: 'applied', revision: after?.revision ?? null, line: parts.join(' · ') },
+    locate: clipId ? { objectIds: [clipId], kind: 'clip' } : trackId ? { objectIds: [trackId], kind: 'track' } : null,
+    undoPrompt: undo
+      ? `撤销这一步：commandId=${undo.commandId}、appliedRevision=${undo.appliedRevision}、afterDigest=${undo.afterDigest}。仅栈顶可撤；已有后续修改会返回 HISTORY_CONFLICT。`
+      : '',
+  }]);
 };
 
 // 分栏拖拽：只改右列宽度，不重建任何节点。
