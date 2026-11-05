@@ -3,7 +3,6 @@ import { detectWebmCapability } from './video-capabilities.mjs';
 import { createEditorBridge } from './video-bridge.mjs';
 import { recordComposition, assertForeground } from './video-export.mjs';
 import { sourceRefFor, digestOf, sameContent, legacyMatches } from './video-sources.mjs';
-import { mountChat, formatMicros } from './video-chat.mjs';
 
 const $ = id => document.getElementById(id);
 const instanceId = crypto.randomUUID();
@@ -22,7 +21,7 @@ const allClips = () => project().tracks.flatMap(track => track.clips.map(clip =>
 const clip = () => allClips().find(item => item.id === project().selection) || allClips().find(item => item.trackKind === 'video') || null;
 const format = seconds => { const value = Math.max(0, Number(seconds) || 0); return `${String(Math.floor(value / 60)).padStart(2, '0')}:${String(Math.floor(value % 60)).padStart(2, '0')}.${String(Math.floor(value * 100 % 100)).padStart(2, '0')}`; };
 function toast(message) { const node = $('toast'); node.textContent = message; node.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => node.classList.remove('show'), 2400); }
-function apply(command, commandId = null) { if (exportBusy) throw Object.assign(new Error('导出期间请等待完成后再修改工程'), { code: 'EXPORT_BUSY' }); if (command.type === 'media.video.history.undo' || command.type === 'media.video.history.redo') { const backwards = command.type.endsWith('.undo'); if (!(backwards ? canUndo(history) : canRedo(history))) throw Object.assign(new Error('没有可撤销或重做的修改'), { code: 'HISTORY_EMPTY' }); history = backwards ? undo(history) : redo(history); render(); return readState(project(), history, instanceId, capabilities()); } const before = readState(project(), history, instanceId, capabilities()); const next = reduceProject(project(), command); next.lastCommandId = commandId; history = commit(history, next); const after = readState(project(), history, instanceId, capabilities()); $('auditDigest').textContent = `${before.stateDigest.slice(-8)} → ${after.stateDigest.slice(-8)} · R${before.revision}→R${after.revision}`; render(); globalThis.__dshChatTool?.(command, after, { commandId, beforeDigest: before.stateDigest }); return after; }
+function apply(command, commandId = null) { if (exportBusy) throw Object.assign(new Error('导出期间请等待完成后再修改工程'), { code: 'EXPORT_BUSY' }); if (command.type === 'media.video.history.undo' || command.type === 'media.video.history.redo') { const backwards = command.type.endsWith('.undo'); if (!(backwards ? canUndo(history) : canRedo(history))) throw Object.assign(new Error('没有可撤销或重做的修改'), { code: 'HISTORY_EMPTY' }); history = backwards ? undo(history) : redo(history); render(); return readState(project(), history, instanceId, capabilities()); } const before = readState(project(), history, instanceId, capabilities()); const next = reduceProject(project(), command); next.lastCommandId = commandId; history = commit(history, next); const after = readState(project(), history, instanceId, capabilities()); $('auditDigest').textContent = `${before.stateDigest.slice(-8)} → ${after.stateDigest.slice(-8)} · R${before.revision}→R${after.revision}`; render(); return after; }
 function recordPlaybackTime(time) { const next = reduceProject(project(), { type: 'media.video.timeline.seek', time }); history = { ...history, present: next }; }
 function capabilities() { return { webm: webmCapability.status === 'available' }; }
 function probeCapabilities() { webmCapability = detectWebmCapability($('video')); const label = $('webmCapability'); label.textContent = webmCapability.status === 'available' ? `可用 (${webmCapability.mimeType})` : '不可用'; label.title = webmCapability.reason; label.className = webmCapability.status === 'available' ? '' : 'unknown'; $('exportVideo').disabled = webmCapability.status !== 'available' || !clip(); }
@@ -233,46 +232,6 @@ async function importVideo(file) {
   const entry = media.get(ref);
   if (!element.src && entry) { element.src = entry.url; element.load(); }
 }
-function makeIntent(raw) {
-  const normalized = String(raw ?? '').trim();
-  if (!normalized) throw new Error('请先描述要做的操作');
-  if (/删除|移除|覆盖|导出|导入/.test(normalized)) return { id: crypto.randomUUID(), operation: 'media.video.clip.remove', risk: 'high', reason: normalized, command: clip() ? { type: 'media.video.clip.remove', clipId: clip().id } : null };
-  const match = normalized.match(/(?:加上|添加|加入|写上|放上)(?:一段)?(?:欢迎|标题|文字|字幕)?(?:文字)?[：:「“]?(.+?)[」”]?$|(?:文字|字幕)[：:「“](.+?)[」”]?$/);
-  const text = (match?.[1] || match?.[2] || '').trim();
-  if (text) return { id: crypto.randomUUID(), operation: 'media.video.overlay.add', risk: 'low', reason: normalized, command: { type: 'media.video.overlay.add', overlay: { id: crypto.randomUUID(), kind: 'text', name: text.slice(0, 18), content: text } } };
-  throw new Error('当前原型仅能把文字叠加意图转换为结构化命令；请描述“添加文字：内容”');
-}
-function showIntent(intent) {
-  activeIntent = { ...intent, intentId: intent.intentId || crypto.randomUUID(), approvalId: crypto.randomUUID(), mode, actor: 'local-demo', reason: intent.reason || '对话意图转换为结构化命令', expiresAt: Date.now() + 60000, expectedRevision: project().revision, beforeDigest: stateDigest(project()), idempotencyKey: crypto.randomUUID(), auditRef: `local-audit-${crypto.randomUUID()}` };
-  $('commandPreview').hidden = false;
-  renderIntentStatus(mode === 'autonomous' && intent.risk === 'low' && autonomousCapabilities.has(intent.operation) ? 'pending' : 'pending');
-  $('approveIntent').onclick = () => executeIntent(activeIntent, true);
-  $('rejectIntent').onclick = () => { renderIntentStatus('rejected', '用户取消'); activeIntent = null; };
-  if (mode === 'autonomous' && intent.risk === 'low' && autonomousCapabilities.has(intent.operation)) executeIntent(activeIntent, false);
-}
-function renderIntentStatus(status, detail = '') {
-  const intent = activeIntent;
-  const riskLabel = intent.risk === 'high' ? '高风险 · 始终需要确认' : '低风险操作预览';
-  const autonomousAllowed = intent.mode === 'autonomous' && intent.risk === 'low' && autonomousCapabilities.has(intent.operation);
-  $('commandPreview').innerHTML = `<small>本地规则模拟 · 非真实 DSH 对话/Agent 接入</small><strong>${riskLabel}</strong><code>${escapeHtml(intent.operation)}<br>${escapeHtml(JSON.stringify(intent.command))}</code><p>影响：${intent.operation === 'media.video.overlay.add' ? '新增 1 个文字叠加对象' : '删除当前视频片段'} · 预期修订 R${intent.expectedRevision}</p><p>门控：intent ${escapeHtml(intent.intentId.slice(0, 8))} · approval ${escapeHtml(intent.approvalId.slice(0, 8))} · ${intent.mode} · actor ${escapeHtml(intent.actor)} · ${new Date(intent.expiresAt).toLocaleTimeString()}</p><p>状态：<b>${status}</b>${detail ? ` · ${escapeHtml(detail)}` : ''}${intent.mode === 'autonomous' && intent.risk === 'low' && !autonomousAllowed ? ' · 缺少 capability 授权' : ''}</p><p>影响摘要：${intent.reason}</p><div class="preview-actions"><button class="approve" id="approveIntent" ${status !== 'pending' ? 'disabled' : ''}>确认执行</button><button class="reject" id="rejectIntent">取消</button></div>`;
-}
-function executeIntent(intent, humanApproved) {
-  if (!intent?.command) { renderIntentStatus('rejected', '没有可执行的目标对象'); return; }
-  if (Date.now() > intent.expiresAt || project().revision !== intent.expectedRevision || stateDigest(project()) !== intent.beforeDigest) { renderIntentStatus('rejected', '审批过期或工程修订已变化，请重新读取'); return; }
-  const autonomousAllowed = intent.mode === 'autonomous' && intent.risk === 'low' && autonomousCapabilities.has(intent.operation);
-  if (intent.risk === 'high' && !humanApproved) { renderIntentStatus('pending', '高风险必须人工确认'); return; }
-  if (intent.mode === 'assist' && !humanApproved) { renderIntentStatus('pending', '等待人工确认'); return; }
-  if (intent.mode === 'autonomous' && !humanApproved && !autonomousAllowed) { renderIntentStatus('pending', '未获该命令 capability，等待人工处理'); return; }
-  if (humanApproved && !window.confirm(`确认执行 ${intent.operation}？本地模拟，不会调用真实 DSH。`)) { renderIntentStatus('rejected', '用户拒绝审批'); return; }
-  const before = readState(project(), history, instanceId, capabilities());
-  renderIntentStatus('pending', '本地模拟 bridge 执行中');
-  try {
-    const after = apply(intent.command);
-    $('auditDigest').textContent = `${before.stateDigest} → ${after.stateDigest} · ${intent.auditRef} · ${intent.actor}`;
-    renderIntentStatus('applied', `R${before.revision}→R${after.revision} · ${before.stateDigest}→${after.stateDigest}`);
-    toast(`本地模拟已应用 · 修订 R${after.revision}`);
-  } catch (error) { renderIntentStatus('rejected', error.message); toast(error.message); }
-}
 function saveSnapshot() {
   const data = snapshotProject(project()); const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
   const link = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: `${project().source?.name?.replace(/\.[^.]+$/, '') || 'video-project'}.json` }); link.click(); URL.revokeObjectURL(link.href); toast('工程快照已下载；媒体文件未嵌入');
@@ -400,9 +359,6 @@ $('overlayText').addEventListener('keydown', event => {
 $('overlayList').onclick = event => { const id = event.target.dataset.removeOverlay; if (id) apply({ type: 'media.video.overlay.remove', overlayId: id }); };
 $('saveProject').onclick = saveSnapshot; $('openProject').onclick = () => $('projectInput').click(); $('projectInput').addEventListener('change', event => { openSnapshot(event.currentTarget.files?.[0]); event.currentTarget.value = ''; }); $('exportVideo').onclick = exportWebm;
 $('exportQuick').onclick = exportWebm;
-$('parseIntent').onclick = () => { try { if (!clip()) throw new Error('先导入视频再生成编辑意图'); showIntent(makeIntent($('intentInput').value)); } catch (error) { toast(error.message); } };
-document.querySelectorAll('.mode-option').forEach(button => button.onclick = () => { mode = button.dataset.mode; document.querySelectorAll('.mode-option').forEach(item => item.classList.toggle('active', item === button)); $('modeNote').textContent = mode === 'assist' ? '每次写入先预览并由你确认。' : '仅已授权低风险命令可自动执行；高风险仍需人工确认。自主授权仅为本地模拟。'; });
-$('grantCapability').onclick = () => { autonomousCapabilities.add('media.video.overlay.add'); toast('已授予本地模拟 capability：media.video.overlay.add'); };
 $('readState').onclick = () => { const state = readState(project(), history, instanceId, capabilities()); $('auditDigest').textContent = `${state.stateDigest} · revision ${state.revision} · ${state.history.canUndo ? '可撤销' : '无撤销历史'} · 本地模拟回读`; toast(`状态已回读 · R${state.revision} · 本地模拟`); };
 $('zoomIn').onclick = () => { zoom = Math.min(2, zoom + 0.1); $('video').style.transform = `scale(${zoom})`; }; $('zoomOut').onclick = () => { zoom = Math.max(0.7, zoom - 0.1); $('video').style.transform = `scale(${zoom})`; };
 render();
@@ -447,119 +403,4 @@ function notifySelectionIfChanged() {
   });
 }
 
-// ── 0.2.0 P0：对话面板（消息映射 / 工具卡片 / 输入区 / 审批只读）──
-// 只做渲染与页面内定位：定位只改 selection 与描边，不改 revision、不进历史、不发 transport 消息。
-const chat = mountChat({
-  root: $('chatPanel'),
-  onLocate: payload => locateClipFromCard(payload),
-  onDownload: exportRef => downloadExport(exportRef),
-  onOpenSession: () => {
-    if (!document.querySelector('.chat-panel')) return;
-    if (window.parent !== window) window.parent.postMessage({ type: 'media.openSession', editorKind: 'video' }, location.origin);
-    else chat.showError('当前页面不在宿主内，没有可打开的原生会话');
-  },
-  onSend: async payload => {
-    // 本地模拟：还没有接真实 DSH 会话。明确说明，不伪造"已发给模型"。
-    chat.append({ kind: 'assistant', text: `收到：「${payload.text}」。当前是本地模拟，未连接 DSH 会话；接入后同一条消息会交给会话执行。` });
-  },
-  initialMessages: [
-    { kind: 'assistant', text: '试试点工具卡片，我会定位到对应的时间线片段。\n\n- 例：`clip.add` 会带上轨道与片段身份\n- 例：`track.update` 会带上轨道 id' },
-  ],
-});
-
-// 渲染自检钩子：只在 loopback + ?debug 时暴露，且只读（可查看、可渲染计划），
-// 没有任何发送、命令派发或审批入口——它不能变成一条绕过审计的通道。
-const __loopback = ['127.0.0.1', 'localhost', '::1', '[::1]'].includes(location.hostname);
-if (__loopback && new URLSearchParams(location.search).has('debug')) {
-  globalThis.__dshChatDebug = Object.freeze({
-    messages: () => chat.messages,
-    render: rows => chat.appendRows(rows),
-  });
-}
-
-// 「在编辑器中另存为文件」：导出作业完成才有 artifactRef；没完成就明说，不做假按钮。
-function downloadExport(exportRef = {}) {
-  const job = exportRef.exportId ? exportJobs.get(exportRef.exportId) : null;
-  const url = exportRef.artifactRef || job?.artifactRef;
-  if (!url) {
-    chat.showError('这次导出还没有可下载的文件，等导出结束后再点');
-    return;
-  }
-  const anchor = document.createElement('a');
-  anchor.href = url;
-  anchor.download = job?.fileName || `video-export.${exportRef.format === 'mp4' ? 'mp4' : 'webm'}`;
-  document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
-}
-
-function locateClipFromCard(payload = {}) {
-  const ids = payload.objectIds?.length ? payload.objectIds : [payload.clipId].filter(Boolean);
-  const target = ids.map(id => allClips().find(item => item.id === id)).find(Boolean) || null;
-  const track = ids.map(id => project().tracks.find(item => item.id === id)).find(Boolean) || null;
-  if (!target && !track) {
-    chat.showError('这个对象已不在工程里（可能被删除或撤销）');
-    return;
-  }
-  if (target) {
-    // 只改选中与描边：不 bump revision、不进历史、不写文档。
-    history = { ...history, present: { ...project(), selection: target.id } };
-    selectedTrackId = target.trackId || payload.trackId || selectedTrackId;
-    render();
-  }
-  const { matched } = highlightObjects(ids, 2000);
-  if (!matched.length) chat.showError('没有找到可高亮的对象');
-  else chat.showError('');
-}
-
-// 每次成功写入后追加一张工具卡片：走共享 dialog-model 的计划路径。
-// line 里只放身份摘要（轨道/片段/起止），原始命令与回执不进 DOM。
-globalThis.__dshChatTool = (command, after, meta = {}) => {
-  const clipId = command.clipId || command.clip?.id || (command.type === 'media.video.clip.add' ? after?.selection : null);
-  const target = clipId ? allClips().find(item => item.id === clipId) : null;
-  const trackId = command.trackId || target?.trackId || null;
-  const parts = [command.type];
-  if (trackId) parts.push(`轨道 ${String(trackId).slice(0, 8)}…`);
-  if (clipId) parts.push(`片段 ${String(clipId).slice(0, 6)}…`);
-  if (target) parts.push(`${formatMicros(Math.round(target.start * 1e6))}–${formatMicros(Math.round((target.start + (target.out - target.in)) * 1e6))}`);
-  const undo = meta.commandId && meta.beforeDigest ? {
-    commandId: meta.commandId, appliedRevision: after?.revision, afterDigest: after?.stateDigest,
-  } : null;
-  chat.appendRows([{
-    id: crypto.randomUUID(),
-    role: 'tool',
-    card: { name: '时间线命令', status: 'applied', revision: after?.revision ?? null, line: parts.join(' · ') },
-    locate: clipId ? { objectIds: [clipId], kind: 'clip' } : trackId ? { objectIds: [trackId], kind: 'track' } : null,
-    // 撤销凭据交给共享模型生成整句 prompt；渲染层不拼文案（dialog-model@3）。
-    undo,
-  }]);
-};
-
-// 分栏拖拽：只改右列宽度，不重建任何节点。
-(() => {
-  const splitter = $('paneSplitter');
-  const workspace = document.querySelector('.workspace');
-  if (!splitter || !workspace) return;
-  const applyWidth = width => {
-    const clamped = Math.max(260, Math.min(560, width));
-    workspace.style.setProperty('--side-width', `${clamped}px`);
-  };
-  let dragging = false;
-  splitter.addEventListener('pointerdown', event => {
-    dragging = true;
-    splitter.setPointerCapture(event.pointerId);
-    event.preventDefault();
-  });
-  splitter.addEventListener('pointermove', event => {
-    if (!dragging) return;
-    applyWidth(window.innerWidth - event.clientX);
-  });
-  const stop = () => { dragging = false; };
-  splitter.addEventListener('pointerup', stop);
-  splitter.addEventListener('pointercancel', stop);
-  splitter.addEventListener('keydown', event => {
-    const current = parseInt(getComputedStyle(workspace).getPropertyValue('--side-width')) || 320;
-    if (event.key === 'ArrowLeft') { applyWidth(current + 24); event.preventDefault(); }
-    if (event.key === 'ArrowRight') { applyWidth(current - 24); event.preventDefault(); }
-  });
-})();
+// 页面内不再挂对话面板：真实对话在宿主侧（lib/client.js 的 Conversation），本页只负责编辑器。
