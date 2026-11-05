@@ -76,7 +76,7 @@ function messageText(message) {
   return '';
 }
 
-export function mountChat({ root, onLocate, onOpenSession, onSend, onRetry, initialMessages = [], emptyHint = '和 DSH 说一句，让它改这条时间线。' }) {
+export function mountChat({ root, onLocate, onOpenSession, onSend, onRetry, onDownload, initialMessages = [], emptyHint = '和 DSH 说一句，让它改这条时间线。' }) {
   const list = root.querySelector('[data-chat-list]');
   const composer = root.querySelector('[data-chat-input]');
   const sendButton = root.querySelector('[data-chat-send]');
@@ -390,15 +390,20 @@ export function mountChat({ root, onLocate, onOpenSession, onSend, onRetry, init
       } else if (action.kind === 'fill-undo') {
         button.textContent = action.label || '填入撤销指令';
         if (action.hint) button.title = action.hint;
-        // 凭据必须由计划携带（dialog-model@2 起）；没有就置灰，不回查原始行。
-        const prompt = item.undoPrompt || '';
-        if (!prompt) { button.disabled = true; button.title = '缺少撤销凭据（等待计划携带 commandId / appliedRevision / afterDigest）'; }
+        // 凭据与整句指令由计划携带（dialog-model@3 起），渲染层不拼文案、不回查原始行。
+        const prompt = action.prompt || '';
+        if (!prompt) { button.disabled = true; button.title = '缺少撤销凭据（计划未携带 prompt）'; }
         button.addEventListener('click', () => {
           if (!composer || !prompt) return;
           composer.value = prompt;
           composer.dispatchEvent(new Event('input', { bubbles: true }));
           composer.focus();
         });
+      } else if (action.kind === 'download-export') {
+        button.textContent = action.label || '在编辑器中另存为文件';
+        if (action.export?.exportId) button.dataset.exportId = action.export.exportId;
+        if (typeof onDownload === 'function') button.addEventListener('click', () => onDownload(action.export));
+        else { button.disabled = true; button.title = '导出文件只能由宿主页面在编辑器中另存'; }
       } else {
         button.textContent = action.label || action.kind;
         button.disabled = true;

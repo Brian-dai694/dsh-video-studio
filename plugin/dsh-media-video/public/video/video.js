@@ -466,6 +466,9 @@ const chat = mountChat({
   ],
 });
 
+// 渲染自检钩子：仅 ?debug 时暴露，用于在没有真实命令凭据时验证"计划字段真的进 DOM"。
+if (new URLSearchParams(location.search).has('debug')) globalThis.__dshChat = chat;
+
 function locateClipFromCard(payload = {}) {
   const ids = payload.objectIds?.length ? payload.objectIds : [payload.clipId].filter(Boolean);
   const target = ids.map(id => allClips().find(item => item.id === id)).find(Boolean) || null;
@@ -503,9 +506,8 @@ globalThis.__dshChatTool = (command, after, meta = {}) => {
     role: 'tool',
     card: { name: '时间线命令', status: 'applied', revision: after?.revision ?? null, line: parts.join(' · ') },
     locate: clipId ? { objectIds: [clipId], kind: 'clip' } : trackId ? { objectIds: [trackId], kind: 'track' } : null,
-    undoPrompt: undo
-      ? `撤销这一步：commandId=${undo.commandId}、appliedRevision=${undo.appliedRevision}、afterDigest=${undo.afterDigest}。仅栈顶可撤；已有后续修改会返回 HISTORY_CONFLICT。`
-      : '',
+    // 撤销凭据交给共享模型生成整句 prompt；渲染层不拼文案（dialog-model@3）。
+    undo,
   }]);
 };
 
