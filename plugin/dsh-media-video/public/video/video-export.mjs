@@ -180,7 +180,7 @@ function audioContextFor() {
 
 export async function recordComposition({ project, elements, mimeType, onProgress = () => {} }) {
   const plan = compositePlan(project);
-  if (!plan.video.some(track => track.clips.length)) throw new Error('工程中没有可导出的视频片段');
+  if (!plan.video.some(track => track.clips.length)) throw new Error('纯音频工程暂不支持导出视频，请至少放入一个视频片段');
   assertForeground();
   if (!mimeType || !MediaRecorder.isTypeSupported(mimeType)) throw new Error('当前浏览器没有可用的 WebM 编码器');
 

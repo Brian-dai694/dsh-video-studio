@@ -88,3 +88,8 @@ test('静音视频轨只静声音：画面仍在计划里，音量归零', () =>
   assert.equal(muted.video.length, 1, '静音不等于隐藏，画面必须保留');
   assert.equal(muted.video[0].volume, 0, '静音后该轨增益为 0');
 });
+
+test('纯音频工程导出时给能力限制文案，而不是“工程坏了”的口吻', () => {
+  assert.match(exportSource, /纯音频工程暂不支持导出视频，请至少放入一个视频片段/);
+  assert.equal(exportSource.includes("'工程中没有可导出的视频片段'"), false);
+});
