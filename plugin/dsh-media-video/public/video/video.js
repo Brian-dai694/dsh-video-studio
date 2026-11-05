@@ -507,7 +507,7 @@ function locateClipFromCard(payload = {}) {
     selectedTrackId = target.trackId || payload.trackId || selectedTrackId;
     render();
   }
-  const { matched } = highlightObjects(ids, 1500);
+  const { matched } = highlightObjects(ids, 2000);
   if (!matched.length) chat.showError('没有找到可高亮的对象');
   else chat.showError('');
 }
