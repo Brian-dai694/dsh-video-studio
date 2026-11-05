@@ -7,13 +7,10 @@ import { sourceRefFor, digestOf, sameContent, legacyMatches } from './video-sour
 const $ = id => document.getElementById(id);
 const instanceId = crypto.randomUUID();
 let history = createHistory(createProject());
-let mode = 'assist';
-const autonomousCapabilities = new Set();
 let webmCapability = { status: 'checking', mimeType: '', reason: '正在探测浏览器能力' };
 let selectedTrackId = null;
 let importGeneration = 0;
 let zoom = 1;
-let activeIntent = null;
 let bridge = null;
 let toastTimer;
 const project = () => history.present;
@@ -138,8 +135,8 @@ function drawOverlays() {
   }
   if (media.size && video.readyState >= 2) $('emptyStage').hidden = true;
 }
-function undoAction() { const before = readState(project(), history, instanceId, capabilities()); history = undo(history); const after = readState(project(), history, instanceId, capabilities()); if (before.stateDigest !== after.stateDigest) $('auditDigest').textContent = `${before.stateDigest} → ${after.stateDigest} · 撤销 R${before.revision}→R${after.revision} · 本地模拟`; render(); }
-function redoAction() { const before = readState(project(), history, instanceId, capabilities()); history = redo(history); const after = readState(project(), history, instanceId, capabilities()); if (before.stateDigest !== after.stateDigest) $('auditDigest').textContent = `${before.stateDigest} → ${after.stateDigest} · 重做 R${before.revision}→R${after.revision} · 本地模拟`; render(); }
+function undoAction() { const before = readState(project(), history, instanceId, capabilities()); history = undo(history); const after = readState(project(), history, instanceId, capabilities()); if (before.stateDigest !== after.stateDigest) $('auditDigest').textContent = `${before.stateDigest} → ${after.stateDigest} · 撤销 R${before.revision}→R${after.revision}`; render(); }
+function redoAction() { const before = readState(project(), history, instanceId, capabilities()); history = redo(history); const after = readState(project(), history, instanceId, capabilities()); if (before.stateDigest !== after.stateDigest) $('auditDigest').textContent = `${before.stateDigest} → ${after.stateDigest} · 重做 R${before.revision}→R${after.revision}`; render(); }
 let attachedMediaRef = null;
 // MediaRecorder 产出的 WebM 头部没有时长，浏览器会报 Infinity；必须先跳到末尾让它解析出真实时长。
 function resolveMediaDuration(video) {
@@ -359,7 +356,7 @@ $('overlayText').addEventListener('keydown', event => {
 $('overlayList').onclick = event => { const id = event.target.dataset.removeOverlay; if (id) apply({ type: 'media.video.overlay.remove', overlayId: id }); };
 $('saveProject').onclick = saveSnapshot; $('openProject').onclick = () => $('projectInput').click(); $('projectInput').addEventListener('change', event => { openSnapshot(event.currentTarget.files?.[0]); event.currentTarget.value = ''; }); $('exportVideo').onclick = exportWebm;
 $('exportQuick').onclick = exportWebm;
-$('readState').onclick = () => { const state = readState(project(), history, instanceId, capabilities()); $('auditDigest').textContent = `${state.stateDigest} · revision ${state.revision} · ${state.history.canUndo ? '可撤销' : '无撤销历史'} · 本地模拟回读`; toast(`状态已回读 · R${state.revision} · 本地模拟`); };
+$('readState').onclick = () => { const state = readState(project(), history, instanceId, capabilities()); $('auditDigest').textContent = `${state.stateDigest} · revision ${state.revision} · ${state.history.canUndo ? '可撤销' : '无撤销历史'} · 已回读`; toast(`状态已回读 · R${state.revision}`); };
 $('zoomIn').onclick = () => { zoom = Math.min(2, zoom + 0.1); $('video').style.transform = `scale(${zoom})`; }; $('zoomOut').onclick = () => { zoom = Math.max(0.7, zoom - 0.1); $('video').style.transform = `scale(${zoom})`; };
 render();
 probeCapabilities();
