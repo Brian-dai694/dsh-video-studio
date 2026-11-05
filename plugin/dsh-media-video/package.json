@@ -1,6 +1,6 @@
 {
   "name": "dsh-media-video",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "private": true,
   "description": "DSH Host plugin: packaged multi-track video editor page (timeline, subtitles, WebM export) that a human and a DSH agent edit through one shared native history.",
   "type": "module",
