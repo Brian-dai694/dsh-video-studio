@@ -452,6 +452,7 @@ function notifySelectionIfChanged() {
 const chat = mountChat({
   root: $('chatPanel'),
   onLocate: payload => locateClipFromCard(payload),
+  onDownload: exportRef => downloadExport(exportRef),
   onOpenSession: () => {
     if (!document.querySelector('.chat-panel')) return;
     if (window.parent !== window) window.parent.postMessage({ type: 'media.openSession', editorKind: 'video' }, location.origin);
@@ -468,6 +469,22 @@ const chat = mountChat({
 
 // 渲染自检钩子：仅 ?debug 时暴露，用于在没有真实命令凭据时验证"计划字段真的进 DOM"。
 if (new URLSearchParams(location.search).has('debug')) globalThis.__dshChat = chat;
+
+// 「在编辑器中另存为文件」：导出作业完成才有 artifactRef；没完成就明说，不做假按钮。
+function downloadExport(exportRef = {}) {
+  const job = exportRef.exportId ? exportJobs.get(exportRef.exportId) : null;
+  const url = exportRef.artifactRef || job?.artifactRef;
+  if (!url) {
+    chat.showError('这次导出还没有可下载的文件，等导出结束后再点');
+    return;
+  }
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = job?.fileName || `video-export.${exportRef.format === 'mp4' ? 'mp4' : 'webm'}`;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+}
 
 function locateClipFromCard(payload = {}) {
   const ids = payload.objectIds?.length ? payload.objectIds : [payload.clipId].filter(Boolean);
