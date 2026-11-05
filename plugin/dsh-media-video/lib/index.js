@@ -9,6 +9,7 @@ import { createMediaBridge } from './bridge.js';
 import { createGuard, createApprovalStore } from './gate.js';
 import { registerMediaTools } from './tools.js';
 import { createMediaRouter } from './http.js';
+import { VERSION } from './version.js';
 
 export const name = 'dsh-media-video';
 export const inject = ['tools', 'webServer', 'approval'];
@@ -38,6 +39,7 @@ export function apply(ctx, config = {}) {
     publicDir,
     editorRoot: config.videoRoot ? resolve(config.videoRoot)
       : existsSync(join(packagedRoot, 'index.html')) ? packagedRoot : null,
+    version: VERSION,
   });
   ctx.effect(() => ctx.webServer.register({ kind: 'prefix', path: '/media-video', handler: router }), 'dsh-media-video: routes');
 

@@ -117,3 +117,18 @@ button:disabled{opacity:.5;cursor:not-allowed;transform:none}
 .minimal-editor .inspector { display: none; }
 .minimal-editor .viewer-column { height: auto; }
 .minimal-editor .workspace { height: auto; }
+
+/* 版本徽标：值来自 package.json（服务端注入 __DSH_STUDIO_VERSION__），不在页面里手写第二份。 */
+.studio-version {
+  font: 10px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: .08em;
+  color: var(--muted);
+  padding: 4px 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-2);
+  white-space: nowrap;
+}
+.minimal-editor .studio-version { border-color: #d2d2d7; background: #f5f5f7; color: #6e6e73; }
+/* 窄窗口也必须看得到版本：只收窄内边距，不隐藏。 */
+@media(max-width:850px){ .studio-version { padding: 3px 7px; } }
