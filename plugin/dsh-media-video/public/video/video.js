@@ -292,7 +292,7 @@ function startExport(message) {
   const format = String(message.format || '');
   if (format !== 'webm') throw Object.assign(new Error('本轮只验证 WebM 导出；MP4 未验证，暂不可用'), { code: 'EXPORT_FORMAT_UNAVAILABLE' });
   if (!capabilities().webm) throw Object.assign(new Error('当前浏览器不支持 WebM 录制'), { code: 'EXPORT_UNAVAILABLE' });
-  if (!clip()) throw Object.assign(new Error('工程中没有可导出的视频片段'), { code: 'EXPORT_EMPTY' });
+  if (!clip()) throw Object.assign(new Error('纯音频工程暂不支持导出视频，请至少放入一个视频片段'), { code: 'EXPORT_EMPTY' });
   if (exportBusy) throw Object.assign(new Error('已有导出正在进行'), { code: 'EXPORT_BUSY' });
   // 后台标签的 rAF 会被节流，合成循环不推进就没有帧可录；在这里直接拒绝，别让用户空等。
   assertForeground();

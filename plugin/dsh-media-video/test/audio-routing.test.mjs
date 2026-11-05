@@ -1,3 +1,4 @@
+import { readFileSync as readUi } from 'node:fs';
 // 音频路由契约：视频轨音量真正生效、同一素材不允许两处发声、回执同时给 peak 与 peakDb。
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -92,4 +93,10 @@ test('静音视频轨只静声音：画面仍在计划里，音量归零', () =>
 test('纯音频工程导出时给能力限制文案，而不是“工程坏了”的口吻', () => {
   assert.match(exportSource, /纯音频工程暂不支持导出视频，请至少放入一个视频片段/);
   assert.equal(exportSource.includes("'工程中没有可导出的视频片段'"), false);
+});
+
+test('UI 层的空工程文案与引擎一致，不再说“工程中没有可导出的视频片段”', () => {
+  const ui = readUi(join(here, '../public/video/video.js'), 'utf8');
+  assert.match(ui, /纯音频工程暂不支持导出视频，请至少放入一个视频片段/);
+  assert.equal(ui.includes("'工程中没有可导出的视频片段'"), false);
 });
