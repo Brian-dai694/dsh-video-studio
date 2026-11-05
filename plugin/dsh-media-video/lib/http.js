@@ -2,6 +2,7 @@
 // packaged editor pages for this single editor kind. No separate HTTP server is started.
 import { readFile, realpath, stat } from 'node:fs/promises';
 import { extname, relative, resolve, sep } from 'node:path';
+import { injectStudioVersion, VERSION } from './version.js';
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -38,7 +39,7 @@ async function readJsonBody(req, limit = 262144) {
   return JSON.parse(Buffer.concat(chunks).toString('utf8'));
 }
 
-async function serveFile(res, root, name) {
+async function serveFile(res, root, name, version = VERSION) {
   if (typeof name !== 'string' || name.includes('..') || name.startsWith('/') || name.endsWith('.map') || !SAFE.test(name)) {
     send(res, 404, { error: 'Not found' });
     return;
@@ -51,9 +52,13 @@ async function serveFile(res, root, name) {
       send(res, 404, { error: 'Not found' });
       return;
     }
-    const bytes = await readFile(path);
+    const type = MIME[extname(path)] || 'application/octet-stream';
+    // HTML 出站时注入版本号：版本只有 package.json 一份来源，页面不手写。
+    const bytes = type.startsWith('text/html')
+      ? Buffer.from(injectStudioVersion(await readFile(path, 'utf8'), version), 'utf8')
+      : await readFile(path);
     res.writeHead(200, {
-      'content-type': MIME[extname(path)] || 'application/octet-stream',
+      'content-type': type,
       'cache-control': 'no-store',
       'x-content-type-options': 'nosniff',
       'referrer-policy': 'same-origin',
@@ -95,7 +100,7 @@ async function handleRelay(req, res, { relay, prefix, token, pathname }) {
   return true;
 }
 
-export function createMediaRouter({ relay, editorKind, prefix, token, publicDir, editorRoot = null }) {
+export function createMediaRouter({ relay, editorKind, prefix, token, publicDir, editorRoot = null, version = VERSION }) {
   const hostRoot = resolve(publicDir, 'host');
   const relayPrefix = `${prefix}/relay/`;
   const editorPrefix = `${prefix}/${editorKind}/`;
@@ -116,22 +121,22 @@ export function createMediaRouter({ relay, editorKind, prefix, token, publicDir,
         send(res, 403, { error: 'Same-origin fetch required' });
         return true;
       }
-      send(res, 200, { accessToken: token, editorKinds: [editorKind] });
+      send(res, 200, { accessToken: token, editorKinds: [editorKind], editorVersion: version });
       return true;
     }
 
     if (pathname === `${prefix}/host` || pathname === `${prefix}/host/`) {
-      await serveFile(res, hostRoot, 'host.html');
+      await serveFile(res, hostRoot, 'host.html', version);
       return true;
     }
     if (pathname.startsWith(`${prefix}/host/`)) {
-      await serveFile(res, hostRoot, decodeURIComponent(pathname.slice(`${prefix}/host/`.length)));
+      await serveFile(res, hostRoot, decodeURIComponent(pathname.slice(`${prefix}/host/`.length)), version);
       return true;
     }
     if (pathname === `${prefix}/${editorKind}`) { res.writeHead(302, { Location: editorPrefix }); res.end(); return true; }
     if (pathname.startsWith(editorPrefix)) {
       if (!editorRoot) { send(res, 503, { error: 'Editor page is not packaged in this build.', code: 'EDITOR_PAGE_UNAVAILABLE' }); return true; }
-      await serveFile(res, editorRoot, decodeURIComponent(pathname.slice(editorPrefix.length)) || 'index.html');
+      await serveFile(res, editorRoot, decodeURIComponent(pathname.slice(editorPrefix.length)) || 'index.html', version);
       return true;
     }
     return false;

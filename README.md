@@ -1,5 +1,6 @@
-﻿# DSH 视频编辑器 · 人机协作
+# DSH 视频编辑器 · 人机协作
 
+[![Version](https://img.shields.io/badge/version-0.1.0-0071e3?style=flat-square)](./plugin/dsh-media-video/package.json)
 [![License](https://img.shields.io/badge/license-MIT-2ea44f?style=flat-square)](./video)
 [![Node](https://img.shields.io/badge/node-%3E%3D22-339933?style=flat-square&logo=node.js&logoColor=white)](https://nodejs.org)
 [![DSH Plugin](https://img.shields.io/badge/DSH-plugin-4D6BFE?style=flat-square)](https://github.com/deepseek-ai/deepseek-harness)
@@ -10,6 +11,8 @@
 你说一句「把开头那三秒裁掉，加一行标题」，Agent 通过受控命令改你正在编辑的工程——改动立刻可见，也能撤销。
 
 剪辑软件不该被切成「人做一个版本、AI 做另一个版本」。这里只有一份工程状态，人机共用同一条命令通道。
+
+**当前版本 `0.1.0`**：版本号的唯一来源是 [`plugin/dsh-media-video/package.json`](./plugin/dsh-media-video/package.json)；编辑器顶栏徽标与 `/media-video/boot` 的 `editorVersion` 都由服务端注入，页面里不写第二份。
 
 ## 能力
 
