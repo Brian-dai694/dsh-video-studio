@@ -266,11 +266,29 @@ export function reduceProject(project, command) {
 }
 
 const stable = value => Array.isArray(value) ? `[${value.map(stable).join(',')}]` : value && typeof value === 'object' ? `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${stable(value[key])}`).join(',')}}` : JSON.stringify(value);
-export function stateDigest(project) {
-  const input = stable({ source: project.source, timeline: { duration: project.timeline.duration, fps: project.timeline.fps }, tracks: project.tracks, overlays: project.overlays });
+// 内容摘要：只含内容。轨道属性（mute/solo/volume）与叠加对象都在内，
+// 播放头 currentTime、选中 selection 这类 UI 态一律不进内容版本。
+export function contentDigest(project) {
+  const input = stable({
+    source: project.source,
+    timeline: { duration: project.timeline.duration, fps: project.timeline.fps },
+    tracks: project.tracks,
+    overlays: project.overlays,
+  });
   let hash = 2166136261;
   for (let i = 0; i < input.length; i++) { hash ^= input.charCodeAt(i); hash = Math.imul(hash, 16777619); }
   return `fnv1a32-${(hash >>> 0).toString(16).padStart(8, '0')}`;
+}
+
+// 兼容层（deprecated）：老调用方仍读 stateDigest，语义等同 contentDigest。
+export const stateDigest = contentDigest;
+
+// UI 瞬时态：改这些不算内容修改，不进 revision，也不进 diff。
+export function viewState(project) {
+  return {
+    currentTime: Math.round((project.timeline.currentTime ?? 0) * 1e6) / 1e6,
+    selection: project.selection ?? null,
+  };
 }
 export function readState(project, history, instanceId, capabilities = {}) {
   const clips = allClips(project);
@@ -278,7 +296,10 @@ export function readState(project, history, instanceId, capabilities = {}) {
   return {
     editorKind: 'video', contractVersion: 1,
     projectId: project.projectId, documentId: project.projectId, editorInstanceId: instanceId,
-    revision: project.revision, stateDigest: stateDigest(project),
+    revision: project.revision,
+    contentDigest: contentDigest(project),
+    viewState: viewState(project),
+    stateDigest: contentDigest(project),
     timeline: clone(project.timeline),
     // solo 优先于 mute：solo 集合非空时非 solo 轨一律不出声；mute 与 solo 同为真按 solo 算。
     // effective 是“实际可听态”，调用方不该自己再推一遍布尔逻辑。
