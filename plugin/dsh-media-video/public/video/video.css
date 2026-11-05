@@ -49,4 +49,59 @@
    不再藏在下拉面板里，避免被画布层抢走命中测试。 */
 .export-quick { display: none; }
 .minimal-editor .export-quick { display: inline-flex; align-items: center; flex: 0 0 auto; white-space: nowrap; }
-.minimal-editor .topbar { flex-wrap: wrap; row-gap: 6px; height: auto; min-height: 58px; }
+.minimal-editor .topbar { flex-wrap: wrap; row-gap: 6px; height: auto; min-height: 60px; }
+
+/* ===== 共享视觉规范 v1（docs/visual-spec.md）===== */
+:root{
+  color-scheme: light;
+  --dsh-bg:#f5f5f7; --dsh-surface:#ffffff; --dsh-ink:#1d1d1f; --dsh-ink-2:#6e6e73; --dsh-ink-3:#86868b;
+  --dsh-accent:#0071e3; --dsh-line:rgba(0,0,0,.08); --dsh-danger:#ff3b30; --dsh-success:#1d7a3c;
+  --dsh-r-sm:10px; --dsh-r-md:12px; --dsh-r-lg:16px; --dsh-r-full:999px;
+  /* 旧变量一律映射到规范 token，不新增第二套色值 */
+  --bg:var(--dsh-bg); --surface:var(--dsh-surface); --surface-2:var(--dsh-bg); --line:var(--dsh-line);
+  --text:var(--dsh-ink); --muted:var(--dsh-ink-2); --accent:var(--dsh-accent);
+  --accent-soft:rgba(0,113,227,.08); --warn:#b25000; --danger:var(--dsh-danger); --radius:var(--dsh-r-md);
+  font:13px/1.5 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI","Microsoft YaHei",sans-serif;
+}
+body{background:var(--dsh-bg);color:var(--dsh-ink)}
+.topbar{background:var(--dsh-surface);height:60px;border-bottom:1px solid var(--dsh-line);gap:24px;padding:0 24px}
+.workspace{height:calc(100vh - 60px)}
+.brand{color:var(--dsh-ink)}.brand span{color:var(--dsh-ink-3)}
+.project-name strong{font-size:13px}.project-name small{font-size:11px;color:var(--dsh-ink-2)}
+.icon-btn,.tool-btn{color:var(--dsh-ink-2);border-radius:var(--dsh-r-sm);min-width:36px;height:36px}
+.icon-btn:hover,.tool-btn:hover{background:rgba(0,0,0,.05);border-color:transparent}
+.export-btn,.primary-btn{background:var(--dsh-accent);color:#fff;border-radius:var(--dsh-r-full);padding:10px 16px;font-weight:600}
+.export-btn:hover,.primary-btn:hover{background:#0077ed}
+.export-btn:active,.primary-btn:active{transform:scale(.96)}
+button{transition:background 180ms cubic-bezier(.25,.1,.25,1),transform 180ms cubic-bezier(.25,.1,.25,1)}
+button:active{transform:scale(.98)}
+button:disabled{opacity:.5;cursor:not-allowed;transform:none}
+:focus-visible{outline:2px solid var(--dsh-accent);outline-offset:2px}
+.eyebrow{color:var(--dsh-ink-3)}
+.viewer-head #mediaLabel{color:var(--dsh-ink-2)}
+.live-state{color:var(--dsh-ink-2)}
+.stage{background:#fff;border:1px solid var(--dsh-line);border-radius:var(--dsh-r-lg);box-shadow:0 4px 12px rgba(0,0,0,.08)}
+.transport{border-bottom:1px solid var(--dsh-line)}
+.round-btn{background:var(--dsh-bg);border:1px solid var(--dsh-line);border-radius:var(--dsh-r-full)}
+.timeline{background:var(--dsh-surface);border:1px solid var(--dsh-line);border-radius:var(--dsh-r-md)}
+.timeline-title{color:var(--dsh-ink)}.timeline-title span{color:var(--dsh-ink-2)}
+.text-btn{color:var(--dsh-accent);border-radius:var(--dsh-r-sm);padding:6px 10px}
+.text-btn:disabled{color:var(--dsh-ink-3)}
+.track-row{border-bottom:1px solid var(--dsh-line)}
+.track-head{color:var(--dsh-ink-2)}
+.track-lane{background:var(--dsh-bg)}
+.track-clip{background:rgba(0,113,227,.14);color:#0b57b3;border:1px solid rgba(0,113,227,.35);border-radius:var(--dsh-r-sm)}
+.track-clip.selected{border-color:var(--dsh-accent)}
+.track-toggle{color:var(--dsh-ink-2);border-radius:var(--dsh-r-sm)}
+.track-toggle.on{background:rgba(0,113,227,.12);color:var(--dsh-accent)}
+.inspector{background:var(--dsh-surface);border-left:1px solid var(--dsh-line)}
+.revision-pill{border:1px solid var(--dsh-line);color:var(--dsh-ink-2);border-radius:var(--dsh-r-sm)}
+.inspector-section{border-bottom:1px solid var(--dsh-line)}
+.property-row{color:var(--dsh-ink-2)}.property-row strong{color:var(--dsh-ink)}
+.overlay-item,.empty-list{background:var(--dsh-bg);border:1px solid var(--dsh-line);border-radius:var(--dsh-r-sm);color:var(--dsh-ink-2)}
+.mode-switch{background:var(--dsh-bg)}.mode-option{color:var(--dsh-ink-2);border-radius:var(--dsh-r-sm)}
+.mode-option.active{background:var(--dsh-surface);color:var(--dsh-ink)}
+.toast{background:var(--dsh-surface);border:1px solid var(--dsh-line);color:var(--dsh-ink);border-radius:var(--dsh-r-md);box-shadow:0 4px 12px rgba(0,0,0,.08)}
+.io-options{background:var(--dsh-surface);border:1px solid var(--dsh-line);border-radius:var(--dsh-r-lg);box-shadow:0 4px 12px rgba(0,0,0,.08)}
+.minimal-editor .stage{box-shadow:0 4px 12px rgba(0,0,0,.08)}
+@media (prefers-reduced-motion: reduce){*{transition:none!important;animation:none!important;transform:none!important}}
