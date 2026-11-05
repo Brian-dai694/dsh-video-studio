@@ -61,6 +61,13 @@ flowchart LR
 | `media_video_export_start` / `media_video_export_status` | WebM 导出与状态 |
 
 路由前缀 `/media-video`，与图片插件包（`/media-image`）互不依赖、可同时安装。
+## 下载安装
+
+预打包插件（可直接装进 DSH profile）：[v0.0.1 · dsh-media-video-0.0.1.tgz](https://github.com/Brian-dai694/dsh-video-studio/releases/download/v0.0.1/dsh-media-video-0.0.1.tgz)
+
+```powershell
+dsh plugin --profile <你的profile> add <下载路径>\dsh-media-video-0.0.1.tgz
+```
 ## 快速开始
 
 ```bash
@@ -83,4 +90,5 @@ cd video && node --test tests/*.test.mjs
 图片侧见 [dsh-image-studio](https://github.com/Brian-dai694/dsh-image-studio)。
 
 [![](https://img.shields.io/badge/powered_by-dsh-4D6BFE?style=flat-square&logo=deepseek&logoColor=white)](https://github.com/deepseek-ai/deepseek-harness)
+
 
