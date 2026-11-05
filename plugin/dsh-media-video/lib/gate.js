@@ -127,9 +127,6 @@ export function createGuard() {
     if (expectedKind === 'video' && name === 'media_video_apply_command' && typeof args.operation === 'string' && !args.operation.startsWith('media.video.')) {
       return 'media_video_apply_command accepts only media.video.* operations.';
     }
-    if (expectedKind === 'image' && name === 'media_image_apply_command' && typeof args.operation === 'string' && !['layer.', 'canvas.', 'history.'].some(prefix => args.operation.startsWith(prefix))) {
-      return 'media_image_apply_command accepts only layer.* operations, canvas.* or history.* operations.';
-    }
     if (args.mode === 'autonomous') {
       const allowed = AUTONOMOUS_CAPABILITIES[expectedKind];
       if (!allowed.has(args.operation)) return `Autonomous execution is not authorized for ${String(args.operation)}.`;
