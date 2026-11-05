@@ -296,7 +296,7 @@ function startExport(message) {
   if (exportBusy) throw Object.assign(new Error('已有导出正在进行'), { code: 'EXPORT_BUSY' });
   // 后台标签的 rAF 会被节流，合成循环不推进就没有帧可录；在这里直接拒绝，别让用户空等。
   assertForeground();
-  const job = { exportId: `export-${crypto.randomUUID()}`, commandId: message.commandId, format, status: 'running', progress: 0, artifactRef: null, bytes: 0, durationSeconds: 0, audio: null, error: null, fileName: 'video-export.webm' };
+  const job = { exportId: `export-${crypto.randomUUID()}`, commandId: message.commandId, format, status: 'running', progress: 0, artifactRef: null, bytes: 0, durationSeconds: 0, audio: null, peakDb: null, warning: null, error: null, fileName: 'video-export.webm' };
   exportJobs.set(job.exportId, job);
   runExport(job);
   return { editorKind: 'video', commandId: message.commandId, exportId: job.exportId, status: 'running' };
@@ -307,10 +307,12 @@ async function runExport(job) {
     const elements = new Map([...media.entries()].map(([ref, entry]) => [ref, entry.element]));
     const result = await recordComposition({ project: structuredClone(project()), elements, mimeType: webmCapability.mimeType, onProgress: value => { job.progress = value; $('exportVideo').textContent = `导出 ${Math.round(value * 100)}%`; } });
     const url = URL.createObjectURL(result.blob);
-    Object.assign(job, { status: 'ready', progress: 1, artifactRef: url, bytes: result.blob.size, durationSeconds: result.durationSeconds, audio: result.hasAudio === true });
+    Object.assign(job, { status: 'ready', progress: 1, artifactRef: url, bytes: result.blob.size, durationSeconds: result.durationSeconds, audio: result.hasAudio === true, peakDb: result.peakDb ?? null, warning: result.warning ?? null });
     Object.assign(document.createElement('a'), { href: url, download: job.fileName }).click();
     setTimeout(() => URL.revokeObjectURL(url), 120000);
-    toast(`WebM 已生成 · ${Math.round(result.blob.size / 1024)} KB · ${result.hasAudio ? '含源音轨' : '素材无音轨'}`);
+    // 削波只告警，不自动压、不自动降音量（契约口径）。
+    if (job.warning) toast(`${job.warning} · ${Math.round(result.blob.size / 1024)} KB`);
+    else toast(`WebM 已生成 · ${Math.round(result.blob.size / 1024)} KB · 峰值 ${job.peakDb === null ? '无音频' : `${job.peakDb} dBFS`}`);
   } catch (error) { job.status = 'failed'; job.error = error.message || '导出失败'; toast(`导出失败：${job.error}`); }
   finally { exportBusy = false; $('exportVideo').textContent = '导出 WebM'; render(); }
 }
