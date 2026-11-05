@@ -93,8 +93,12 @@ test('router serves boot only to same-origin fetch and never exposes a tool HTTP
   };
 
   assert.equal((await call({ url: '/elsewhere' })).handled, false);
-  const denied = await call({ url: '/media-video/boot' });
-  assert.equal(denied.status, 403);
+  // 桌面端（Electron）可能不带 Sec-Fetch-*：缺省按同源放行，跨站仍拒绝。
+  const desktopLike = await call({ url: '/media-video/boot' });
+  assert.equal(desktopLike.status, 200);
+  const cross = await call({ url: '/media-video/boot', headers: { 'sec-fetch-site': 'cross-site', origin: 'https://evil.example' } });
+  assert.equal(cross.status, 403);
+  assert.match(cross.body, /Same-origin fetch required/);
   const ok = await call({ url: '/media-video/boot', headers: { 'sec-fetch-site': 'same-origin', 'sec-fetch-dest': 'empty' } });
   assert.equal(ok.status, 200);
   assert.match(ok.body, /accessToken/);
