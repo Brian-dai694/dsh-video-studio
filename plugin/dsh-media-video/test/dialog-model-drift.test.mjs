@@ -17,10 +17,40 @@ test('vendor 的 dialog-model.mjs 与声明的 sha256/字节数完全一致', as
   assert.equal(bytes.length, meta.bytes);
 });
 
-test('版本号与共享模块一致（dialog-model@1）', async () => {
+test('版本号与共享模块一致（dialog-model@2）', async () => {
   const meta = JSON.parse(await readFile(metaUrl, 'utf8'));
   assert.equal(DIALOG_MODEL_VERSION, meta.version);
-  assert.equal(DIALOG_MODEL_VERSION, 'dialog-model@1');
+  assert.equal(DIALOG_MODEL_VERSION, 'dialog-model@2');
+});
+
+test('locate 透传：合法输入原样进入计划，非法输入整体省略', () => {
+  const [ok] = buildDialogPlan([{
+    id: 't1', role: 'tool', card: { name: '时间线命令', status: 'applied' },
+    locate: { objectIds: ['clip-1', 'clip-2'], kind: 'clip' },
+  }]);
+  assert.deepEqual(ok.locate, { objectIds: ['clip-1', 'clip-2'], kind: 'clip' });
+
+  const [track] = buildDialogPlan([{ id: 't2', role: 'tool', card: { name: 'x', status: 'applied' }, locate: { objectIds: ['track-1'], kind: 'track' } }]);
+  assert.deepEqual(track.locate, { objectIds: ['track-1'], kind: 'track' }, 'track 必须在白名单内');
+
+  for (const bad of [
+    { objectIds: [], kind: 'clip' },
+    { objectIds: [123], kind: 'clip' },
+    { objectIds: ['clip-1'], kind: 'bogus' },
+    { objectIds: 'clip-1', kind: 'clip' },
+  ]) {
+    const [plan] = buildDialogPlan([{ id: 't3', role: 'tool', card: { name: 'x', status: 'applied' }, locate: bad }]);
+    assert.equal('locate' in plan, false, `非法 locate 必须整体省略：${JSON.stringify(bad)}`);
+  }
+});
+
+test('短 JSON 在错误行/工具回执上也算裸 JSON（不再被 40 字符阈值放过）', () => {
+  const short = '{"code":"REVISION_CONFLICT"}';
+  const [error] = buildDialogPlan([{ id: 'e2', role: 'error', text: short }]);
+  assert.equal(JSON.stringify(error.blocks).includes('REVISION_CONFLICT'), false);
+  const [tool] = buildDialogPlan([{ id: 't4', role: 'tool', card: { name: 'x', status: 'applied', line: short } }]);
+  assert.equal((tool.card?.line || '').includes('REVISION_CONFLICT'), false);
+  assert.equal(tool.diagnostic, short, '原文只能进 diagnostic');
 });
 
 test('计划输出不含裸 JSON：错误行与工具行都必须兜底', () => {
